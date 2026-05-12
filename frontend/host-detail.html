@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Detalhe do Host</title>
+    <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('hosts');
+
+        const mainContent = document.querySelector('.main-content');
+        const params = new URLSearchParams(window.location.search);
+        const hostId = params.get('id');
+
+        if (!hostId) {
+            window.location.href = '/hosts.html';
+        }
+
+        async function loadHost() {
+            mainContent.innerHTML = `<div style="padding:60px;text-align:center;color:var(--text-muted);font-family:var(--font-mono);">Carregando...</div>`;
+
+            const res = await apiFetch(`/api/hosts/${hostId}`);
+            if (!res) return;
+            const data = await res.json();
+            const h = data.host;
+            const hw = data.hardware || {};
+            const dt = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
+            const badgeClass = h.status === 'online' ? 'badge-success' : h.status === 'offline' ? 'badge-danger' : 'badge-muted';
+
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div style="display:flex;align-items:center;gap:16px;">
+                    <a href="/hosts.html" style="color:var(--text-muted);font-size:20px;">←</a>
+                    <div>
+                        <h1>${h.hostname}</h1>
+                        <p class="page-subtitle">${h.domain || 'Sem domínio'} · <span class="badge-status ${badgeClass}">${h.status}</span> · Último contato: ${dt}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="page-body">
+                <!-- Hardware -->
+                <div class="panel animate-in" style="margin-bottom:20px;">
+                    <div class="panel-header"><span class="panel-title">Hardware</span></div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <tbody>
+                                <tr><td style="width:200px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Fabricante</td><td class="mono">${hw.manufacturer || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Modelo</td><td class="mono">${hw.model || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Serial</td><td class="mono">${hw.serial || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">CPU</td><td class="mono">${hw.cpu || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">RAM</td><td class="mono">${hw.ram_gb ? hw.ram_gb + ' GB' : '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">BIOS</td><td class="mono">${hw.bios_version || '—'}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Discos -->
+                <div class="panel animate-in animate-in-delay-1" style="margin-bottom:20px;">
+                    <div class="panel-header"><span class="panel-title">Discos</span></div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead><tr><th>Drive</th><th>Total</th><th>Livre</th><th>Uso</th><th>Filesystem</th></tr></thead>
+                            <tbody>
+                                ${data.disks && data.disks.length > 0 ? data.disks.map(d => {
+                                    const pct = d.total_gb ? ((d.total_gb - d.free_gb) / d.total_gb * 100).toFixed(0) : 0;
+                                    const barColor = pct > 85 ? 'var(--danger)' : pct > 70 ? 'var(--warning)' : 'var(--success)';
+                                    return `<tr>
+                                        <td class="mono">${d.drive || '—'}</td>
+                                        <td class="mono">${d.total_gb ? d.total_gb + ' GB' : '—'}</td>
+                                        <td class="mono">${d.free_gb ? d.free_gb + ' GB' : '—'}</td>
+                                        <td><div style="display:flex;align-items:center;gap:10px;">
+                                            <div style="flex:1;max-width:120px;height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden;">
+                                                <div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px;transition:width 0.5s;"></div>
+                                            </div>
+                                            <span class="mono" style="font-size:12px;color:${barColor};">${pct}%</span>
+                                        </div></td>
+                                        <td>${d.filesystem || '—'}</td>
+                                    </tr>`;
+                                }).join('') : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">Sem dados de disco</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Rede -->
+                <div class="panel animate-in animate-in-delay-2" style="margin-bottom:20px;">
+                    <div class="panel-header"><span class="panel-title">Rede</span></div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead><tr><th>Adaptador</th><th>IP</th><th>MAC</th><th>Gateway</th><th>DNS</th></tr></thead>
+                            <tbody>
+                                ${data.network && data.network.length > 0 ? data.network.map(n => `<tr>
+                                    <td>${n.adapter_name || '—'}</td>
+                                    <td class="mono">${n.ip || '—'}</td>
+                                    <td class="mono" style="font-size:11px;">${n.mac || '—'}</td>
+                                    <td class="mono">${n.gateway || '—'}</td>
+                                    <td class="mono">${n.dns || '—'}</td>
+                                </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">Sem dados de rede</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Licenças -->
+                <div class="panel animate-in animate-in-delay-3" style="margin-bottom:20px;">
+                    <div class="panel-header"><span class="panel-title">Licenças</span></div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead><tr><th>Produto</th><th>Edição / Versão</th><th>Canal</th><th>Status</th><th>Chave Parcial</th></tr></thead>
+                            <tbody>
+                                ${data.licenses && data.licenses.length > 0 ? data.licenses.map(l => {
+                                    const lBadge = l.license_status === 'Licensed' ? 'badge-success' : l.license_status === 'Unlicensed' ? 'badge-danger' : 'badge-warning';
+                                    return `<tr>
+                                        <td class="mono" style="text-transform:capitalize;">${l.product}</td>
+                                        <td class="mono">${l.edition || '—'} ${l.version || ''}</td>
+                                        <td>${l.channel || '—'}</td>
+                                        <td><span class="badge-status ${lBadge}">${l.license_status || '—'}</span></td>
+                                        <td class="mono">${l.partial_product_key || '—'}</td>
+                                    </tr>`;
+                                }).join('') : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted)">Sem dados de licença</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Software -->
+                <div class="panel animate-in animate-in-delay-4" style="margin-bottom:20px;">
+                    <div class="panel-header">
+                        <span class="panel-title">Softwares Instalados</span>
+                        <span style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);">${data.software ? data.software.length : 0} itens</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead><tr><th>Nome</th><th>Versão</th><th>Editora</th><th>Instalação</th></tr></thead>
+                            <tbody>
+                                ${data.software && data.software.length > 0 ? data.software.map(sw => `<tr>
+                                    <td class="mono">${sw.name || '—'}</td>
+                                    <td>${sw.version || '—'}</td>
+                                    <td>${sw.publisher || '—'}</td>
+                                    <td>${sw.install_date || '—'}</td>
+                                </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted)">Sem dados de software</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        loadHost();
+    </script>
+</body>
+</html>

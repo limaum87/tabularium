@@ -4,40 +4,47 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tabularium — Login</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { background-color: #f4f6f9; }
-        .login-card { max-width: 400px; margin: 80px auto; }
-    </style>
+    <link rel="stylesheet" href="/css/theme.css">
 </head>
-<body>
-    <div class="container">
-        <div class="card login-card shadow-sm">
-            <div class="card-body p-4">
-                <h3 class="text-center mb-4">🖥️ Tabularium</h3>
-                <div id="alert-box"></div>
-                <form id="login-form">
-                    <div class="mb-3">
-                        <label for="email" class="form-label">E-mail</label>
-                        <input type="email" class="form-control" id="email" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="password" class="form-label">Senha</label>
-                        <input type="password" class="form-control" id="password" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary w-100">Entrar</button>
-                </form>
-            </div>
+<body class="login-page">
+    <div class="login-box">
+        <div class="login-logo">
+            <div class="logo-icon">T</div>
+            <h1>Tabularium</h1>
+            <p>Inventário de ativos</p>
         </div>
+
+        <div class="login-form">
+            <div id="alert-box"></div>
+            <form id="login-form">
+                <div class="form-group">
+                    <label class="form-label-dark" for="email">E-mail</label>
+                    <input type="email" class="form-control-dark" id="email" placeholder="seu@email.com" required autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label class="form-label-dark" for="password">Senha</label>
+                    <input type="password" class="form-control-dark" id="password" placeholder="••••••••" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn-login" id="btn-login">Entrar →</button>
+            </form>
+        </div>
+
+        <p style="text-align: center; margin-top: 24px; font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); letter-spacing: 0.05em;">
+            TABULARIUM v0.1.0
+        </p>
     </div>
 
     <script src="/js/auth.js"></script>
     <script>
+        const btn = document.getElementById('btn-login');
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
             const alertBox = document.getElementById('alert-box');
+
+            btn.disabled = true;
+            btn.textContent = 'Autenticando...';
 
             try {
                 const res = await fetch('/api/auth/login', {
@@ -48,14 +55,19 @@
                 const data = await res.json();
 
                 if (!res.ok) {
-                    alertBox.innerHTML = `<div class="alert alert-danger">${data.detail || 'Erro ao fazer login'}</div>`;
+                    alertBox.innerHTML = `<div class="login-alert alert-error">${data.detail || 'Erro ao fazer login'}</div>`;
+                    btn.disabled = false;
+                    btn.textContent = 'Entrar →';
                     return;
                 }
 
                 localStorage.setItem('token', data.access_token);
+                btn.textContent = '✓ Acessando...';
                 window.location.href = '/dashboard.html';
             } catch (err) {
-                alertBox.innerHTML = '<div class="alert alert-danger">Erro de conexão com o servidor</div>';
+                alertBox.innerHTML = '<div class="login-alert alert-error">Erro de conexão com o servidor</div>';
+                btn.disabled = false;
+                btn.textContent = 'Entrar →';
             }
         });
     </script>

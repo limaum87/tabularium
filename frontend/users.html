@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Usuários</title>
+    <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('users');
+
+        const mainContent = document.querySelector('.main-content');
+
+        async function loadUsers() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                        <h1>Usuários</h1>
+                        <p class="page-subtitle">Gerenciamento de acessos ao sistema</p>
+                    </div>
+                    <button class="btn-primary-accent" onclick="openCreateModal()">+ Novo Usuário</button>
+                </div>
+            </div>
+            <div class="page-body">
+                <div class="panel animate-in">
+                    <div class="panel-header"><span class="panel-title">Lista de Usuários</span></div>
+                    <div class="panel-body">
+                        <table class="data-table" id="users-table">
+                            <thead>
+                                <tr><th>Nome</th><th>E-mail</th><th>Role</th><th>Status</th><th>Criado em</th><th></th></tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal Criar Usuário -->
+            <div id="create-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;display:none;align-items:center;justify-content:center;">
+                <div style="background:var(--bg-card);border:1px solid var(--border-medium);border-radius:var(--radius-lg);padding:32px;width:100%;max-width:440px;">
+                    <h3 style="font-family:var(--font-mono);font-size:16px;margin-bottom:24px;color:var(--text-primary);">Novo Usuário</h3>
+                    <div id="modal-alert"></div>
+                    <div style="margin-bottom:16px;">
+                        <label class="form-label-dark">Nome</label>
+                        <input type="text" class="form-control-dark" id="new-name" required>
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label class="form-label-dark">E-mail</label>
+                        <input type="email" class="form-control-dark" id="new-email" required>
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label class="form-label-dark">Senha</label>
+                        <input type="password" class="form-control-dark" id="new-password" required>
+                    </div>
+                    <div style="margin-bottom:24px;">
+                        <label class="form-label-dark">Role</label>
+                        <select class="form-control-dark" id="new-role">
+                            <option value="viewer">Viewer</option>
+                            <option value="operator">Operator</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;gap:12px;justify-content:flex-end;">
+                        <button class="btn-logout" onclick="closeCreateModal()">Cancelar</button>
+                        <button class="btn-primary-accent" onclick="createUser()">Criar</button>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            // Hide modal initially
+            document.getElementById('create-modal').style.display = 'none';
+
+            await refreshUsers();
+        }
+
+        async function refreshUsers() {
+            const res = await apiFetch('/api/users');
+            if (!res) return;
+            const users = await res.json();
+            const tbody = document.querySelector('#users-table tbody');
+            tbody.innerHTML = '';
+            users.forEach(u => {
+                const activeBadge = u.is_active ? 'badge-success' : 'badge-danger';
+                const activeText = u.is_active ? 'Ativo' : 'Inativo';
+                const dt = u.created_at ? new Date(u.created_at).toLocaleDateString('pt-BR') : '—';
+                tbody.innerHTML += `<tr>
+                    <td class="mono">${u.name}</td>
+                    <td style="color:var(--text-secondary);">${u.email}</td>
+                    <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--accent);text-transform:capitalize;">${u.role}</span></td>
+                    <td><span class="badge-status ${activeBadge}">${activeText}</span></td>
+                    <td>${dt}</td>
+                    <td style="text-align:right;">
+                        ${u.is_active
+                            ? `<button onclick="toggleUser(${u.id}, false)" style="background:none;border:1px solid var(--border-medium);color:var(--text-secondary);padding:4px 10px;border-radius:var(--radius-sm);cursor:pointer;font-size:11px;transition:all 0.2s;" onmouseover="this.style.borderColor='var(--danger)';this.style.color='var(--danger)'" onmouseout="this.style.borderColor='var(--border-medium)';this.style.color='var(--text-secondary)'">Desativar</button>`
+                            : `<button onclick="toggleUser(${u.id}, true)" style="background:none;border:1px solid var(--border-medium);color:var(--text-secondary);padding:4px 10px;border-radius:var(--radius-sm);cursor:pointer;font-size:11px;transition:all 0.2s;" onmouseover="this.style.borderColor='var(--success)';this.style.color='var(--success)'" onmouseout="this.style.borderColor='var(--border-medium)';this.style.color='var(--text-secondary)'">Reativar</button>`
+                        }
+                    </td>
+                </tr>`;
+            });
+        }
+
+        function openCreateModal() {
+            document.getElementById('create-modal').style.display = 'flex';
+        }
+
+        function closeCreateModal() {
+            document.getElementById('create-modal').style.display = 'none';
+        }
+
+        async function createUser() {
+            const name = document.getElementById('new-name').value;
+            const email = document.getElementById('new-email').value;
+            const password = document.getElementById('new-password').value;
+            const role = document.getElementById('new-role').value;
+            const alertBox = document.getElementById('modal-alert');
+
+            if (!name || !email || !password) {
+                alertBox.innerHTML = '<div class="login-alert alert-error">Preencha todos os campos</div>';
+                return;
+            }
+
+            const res = await apiFetch('/api/auth/register', {
+                method: 'POST',
+                body: { name, email, password, role },
+            });
+
+            if (res && res.ok) {
+                closeCreateModal();
+                await refreshUsers();
+            } else {
+                const data = await res.json();
+                alertBox.innerHTML = `<div class="login-alert alert-error">${data.detail || 'Erro ao criar usuário'}</div>`;
+            }
+        }
+
+        async function toggleUser(userId, activate) {
+            await apiFetch(`/api/users/${userId}`, {
+                method: 'PUT',
+                body: { is_active: activate },
+            });
+            await refreshUsers();
+        }
+
+        loadUsers();
+    </script>
+</body>
+</html>

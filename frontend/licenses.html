@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Licenças</title>
+    <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('licenses');
+
+        const mainContent = document.querySelector('.main-content');
+
+        async function loadLicenses() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <h1>Licenças</h1>
+                <p class="page-subtitle">Status de licenças Windows e Office</p>
+            </div>
+            <div class="page-body">
+                <div class="panel animate-in">
+                    <div class="panel-header">
+                        <span class="panel-title">Licenças Detectadas</span>
+                        <div style="display:flex;gap:8px;">
+                            <select class="form-control-dark" id="filter-status" style="padding:8px 14px;font-size:12px;width:160px;">
+                                <option value="">Todos os status</option>
+                                <option value="Licensed">Licensed</option>
+                                <option value="Unlicensed">Unlicensed</option>
+                                <option value="Notification">Notification</option>
+                            </select>
+                            <select class="form-control-dark" id="filter-product" style="padding:8px 14px;font-size:12px;width:140px;">
+                                <option value="">Todos</option>
+                                <option value="windows">Windows</option>
+                                <option value="office">Office</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table" id="lic-table">
+                            <thead>
+                                <tr><th>Host</th><th>Produto</th><th>Edição</th><th>Versão</th><th>Status</th><th>Chave Parcial</th></tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            const res = await apiFetch('/api/licenses');
+            if (!res) return;
+            const licenses = await res.json();
+
+            const tbody = document.querySelector('#lic-table tbody');
+
+            function renderLic(list) {
+                tbody.innerHTML = '';
+                if (list.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted)">Nenhuma licença encontrada</td></tr>';
+                    return;
+                }
+                list.forEach(l => {
+                    const badgeClass = l.license_status === 'Licensed' ? 'badge-success' : l.license_status === 'Unlicensed' ? 'badge-danger' : 'badge-warning';
+                    tbody.innerHTML += `<tr>
+                        <td class="mono">${l.hostname}</td>
+                        <td style="text-transform:capitalize;">${l.product}</td>
+                        <td>${l.edition || '—'}</td>
+                        <td>${l.version || '—'}</td>
+                        <td><span class="badge-status ${badgeClass}">${l.license_status || '—'}</span></td>
+                        <td class="mono">${l.partial_product_key || '—'}</td>
+                    </tr>`;
+                });
+            }
+
+            renderLic(licenses);
+
+            function applyFilters() {
+                const statusFilter = document.getElementById('filter-status').value;
+                const productFilter = document.getElementById('filter-product').value;
+                const filtered = licenses.filter(l => {
+                    if (statusFilter && l.license_status !== statusFilter) return false;
+                    if (productFilter && l.product !== productFilter) return false;
+                    return true;
+                });
+                renderLic(filtered);
+            }
+
+            document.getElementById('filter-status').addEventListener('change', applyFilters);
+            document.getElementById('filter-product').addEventListener('change', applyFilters);
+        }
+
+        loadLicenses();
+    </script>
+</body>
+</html>

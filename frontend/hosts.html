@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Hosts</title>
+    <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('hosts');
+
+        const mainContent = document.querySelector('.main-content');
+
+        async function loadHosts() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <h1>Hosts</h1>
+                <p class="page-subtitle">Máquinas inventariadas no domínio</p>
+            </div>
+            <div class="page-body">
+                <div class="panel animate-in">
+                    <div class="panel-header">
+                        <span class="panel-title">Lista de Hosts</span>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <input type="text" class="form-control-dark" id="search-hosts" placeholder="Buscar hostname..." style="width:240px;padding:8px 14px;font-size:12px;">
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table" id="hosts-table">
+                            <thead>
+                                <tr>
+                                    <th>Hostname</th>
+                                    <th>Domínio</th>
+                                    <th>Status</th>
+                                    <th>Último Contato</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            const res = await apiFetch('/api/hosts');
+            if (!res) return;
+            const hosts = await res.json();
+
+            const tbody = document.querySelector('#hosts-table tbody');
+
+            function renderHosts(list) {
+                tbody.innerHTML = '';
+                if (list.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted)">Nenhum host encontrado</td></tr>';
+                    return;
+                }
+                list.forEach(h => {
+                    const badgeClass = h.status === 'online' ? 'badge-success' : h.status === 'offline' ? 'badge-danger' : 'badge-muted';
+                    const dt = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
+                    tbody.innerHTML += `<tr>
+                        <td class="mono">${h.hostname}</td>
+                        <td>${h.domain || '—'}</td>
+                        <td><span class="badge-status ${badgeClass}">${h.status}</span></td>
+                        <td>${dt}</td>
+                        <td style="text-align:right"><a href="/host-detail.html?id=${h.id}" style="font-size:12px;font-family:var(--font-mono);color:var(--accent);">Ver detalhes →</a></td>
+                    </tr>`;
+                });
+            }
+
+            renderHosts(hosts);
+
+            // Search filter
+            document.getElementById('search-hosts').addEventListener('input', (e) => {
+                const q = e.target.value.toLowerCase();
+                const filtered = hosts.filter(h =>
+                    h.hostname.toLowerCase().includes(q) ||
+                    (h.domain && h.domain.toLowerCase().includes(q))
+                );
+                renderHosts(filtered);
+            });
+        }
+
+        loadHosts();
+    </script>
+</body>
+</html>

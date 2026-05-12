@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Softwares</title>
+    <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('software');
+
+        const mainContent = document.querySelector('.main-content');
+
+        async function loadSoftware() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <h1>Softwares</h1>
+                <p class="page-subtitle">Inventário de softwares instalados</p>
+            </div>
+            <div class="page-body">
+                <div class="panel animate-in">
+                    <div class="panel-header">
+                        <span class="panel-title">Softwares Detectados</span>
+                        <input type="text" class="form-control-dark" id="search-sw" placeholder="Buscar software..." style="width:260px;padding:8px 14px;font-size:12px;">
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table" id="sw-table">
+                            <thead>
+                                <tr><th>Nome</th><th>Versão</th><th>Editora</th><th>Instalações</th></tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            const res = await apiFetch('/api/software');
+            if (!res) return;
+            const software = await res.json();
+
+            const tbody = document.querySelector('#sw-table tbody');
+
+            function renderSW(list) {
+                tbody.innerHTML = '';
+                if (list.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--text-muted)">Nenhum software encontrado</td></tr>';
+                    return;
+                }
+                list.forEach(sw => {
+                    tbody.innerHTML += `<tr>
+                        <td class="mono">${sw.name || '—'}</td>
+                        <td>${sw.version || '—'}</td>
+                        <td>${sw.publisher || '—'}</td>
+                        <td><span style="font-family:var(--font-mono);font-weight:600;color:var(--accent);">${sw.install_count}</span></td>
+                    </tr>`;
+                });
+            }
+
+            renderSW(software);
+
+            document.getElementById('search-sw').addEventListener('input', (e) => {
+                const q = e.target.value.toLowerCase();
+                const filtered = software.filter(sw =>
+                    (sw.name && sw.name.toLowerCase().includes(q)) ||
+                    (sw.publisher && sw.publisher.toLowerCase().includes(q))
+                );
+                renderSW(filtered);
+            });
+        }
+
+        loadSoftware();
+    </script>
+</body>
+</html>
