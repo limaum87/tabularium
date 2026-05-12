@@ -698,6 +698,50 @@ a:hover { color: #e8c84a; }
     color: var(--danger);
 }
 
+/* ---- Charts Grid ---- */
+.charts-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    margin-top: 28px;
+}
+
+.chart-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 24px;
+    position: relative;
+}
+
+.chart-panel .chart-title {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    letter-spacing: -0.01em;
+}
+
+.chart-panel canvas {
+    max-height: 260px;
+}
+
+/* ---- Full-width chart ---- */
+.chart-full {
+    grid-column: 1 / -1;
+}
+
+.chart-panel.chart-full canvas {
+    max-height: 220px;
+}
+
+@media (max-width: 900px) {
+    .charts-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 768px) {
     .sidebar {

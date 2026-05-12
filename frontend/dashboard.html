@@ -11,11 +11,21 @@
 
     <script src="/js/auth.js"></script>
     <script src="/js/layout.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script>
         checkAuth();
         loadLayout('dashboard');
 
         const mainContent = document.querySelector('.main-content');
+
+        // Chart.js defaults para combinar com o tema
+        Chart.defaults.color = '#8b93a8';
+        Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+        Chart.defaults.font.family = "'JetBrains Mono', monospace";
+        Chart.defaults.font.size = 11;
+        Chart.defaults.plugins.legend.labels.usePointStyle = true;
+        Chart.defaults.plugins.legend.labels.pointStyleWidth = 8;
+        Chart.defaults.plugins.legend.labels.boxHeight = 8;
 
         async function loadDashboard() {
             mainContent.innerHTML = `
@@ -24,6 +34,7 @@
                 <p class="page-subtitle">Visão geral do inventário de ativos</p>
             </div>
             <div class="page-body">
+                <!-- Stat Cards -->
                 <div class="stat-grid" id="stats">
                     <div class="stat-card card-amber animate-in">
                         <div class="stat-label">Total Hosts</div>
@@ -43,6 +54,27 @@
                     </div>
                 </div>
 
+                <!-- Charts -->
+                <div class="charts-grid animate-in animate-in-delay-4">
+                    <div class="chart-panel">
+                        <div class="chart-title">Status dos Hosts</div>
+                        <canvas id="chart-hosts"></canvas>
+                    </div>
+                    <div class="chart-panel">
+                        <div class="chart-title">Compliance de Licenças</div>
+                        <canvas id="chart-licenses"></canvas>
+                    </div>
+                    <div class="chart-panel">
+                        <div class="chart-title">Top 8 Softwares</div>
+                        <canvas id="chart-software"></canvas>
+                    </div>
+                    <div class="chart-panel">
+                        <div class="chart-title">Coletas por Dia</div>
+                        <canvas id="chart-scans"></canvas>
+                    </div>
+                </div>
+
+                <!-- Últimas Coletas -->
                 <div style="margin-top: 28px;">
                     <div class="panel animate-in animate-in-delay-4">
                         <div class="panel-header">
@@ -65,21 +97,252 @@
             </div>
             `;
 
-            // Compliance
-            const res = await apiFetch('/api/compliance');
-            if (!res) return;
-            const data = await res.json();
-            animateValue('total-hosts', data.total_hosts);
-            animateValue('online-hosts', data.online_hosts);
-            animateValue('offline-hosts', data.offline_hosts);
-            animateValue('license-alerts', (data.windows?.unlicensed || 0) + (data.office?.unlicensed || 0));
+            // ---- Fetch dados ----
+            const [resCompliance, resSoftware, resScans] = await Promise.all([
+                apiFetch('/api/compliance'),
+                apiFetch('/api/software'),
+                apiFetch('/api/scans?limit=100'),
+            ]);
 
-            // Scans
-            const resScans = await apiFetch('/api/scans?limit=15');
-            if (!resScans) return;
-            const scans = await resScans.json();
-            const tbody = document.querySelector('#scans-table tbody');
+            if (!resCompliance) return;
+
+            const compliance = await resCompliance.json();
+            const software   = resSoftware   ? await resSoftware.json()   : [];
+            const scans      = resScans      ? await resScans.json()      : [];
+
+            // Stat cards animados
+            animateValue('total-hosts', compliance.total_hosts);
+            animateValue('online-hosts', compliance.online_hosts);
+            animateValue('offline-hosts', compliance.offline_hosts);
+            animateValue('license-alerts', (compliance.windows?.unlicensed || 0) + (compliance.office?.unlicensed || 0));
+
+            // ---- Chart 1: Hosts Online/Offline (Doughnut) ----
+            new Chart(document.getElementById('chart-hosts'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Online', 'Offline'],
+                    datasets: [{
+                        data: [compliance.online_hosts, compliance.offline_hosts],
+                        backgroundColor: ['#34d399', '#f87171'],
+                        borderColor: 'transparent',
+                        borderWidth: 0,
+                        hoverOffset: 6,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    cutout: '72%',
+                    plugins: {
+                        legend: { position: 'bottom', labels: { padding: 20 } },
+                        tooltip: {
+                            backgroundColor: '#181d28',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            titleFont: { family: "'JetBrains Mono'" },
+                            bodyFont: { family: "'JetBrains Mono'" },
+                            padding: 12,
+                            cornerRadius: 8,
+                        },
+                    },
+                    animation: {
+                        animateRotate: true,
+                        duration: 1200,
+                        easing: 'easeOutQuart',
+                    },
+                }
+            });
+
+            // ---- Chart 2: Licenças (Stacked Bar horizontal) ----
+            const wLic = compliance.windows?.licensed   || 0;
+            const wUnl = compliance.windows?.unlicensed  || 0;
+            const oLic = compliance.office?.licensed     || 0;
+            const oUnl = compliance.office?.unlicensed   || 0;
+
+            new Chart(document.getElementById('chart-licenses'), {
+                type: 'bar',
+                data: {
+                    labels: ['Windows', 'Office'],
+                    datasets: [
+                        {
+                            label: 'Licenciado',
+                            data: [wLic, oLic],
+                            backgroundColor: '#34d399',
+                            borderRadius: 4,
+                            barPercentage: 0.6,
+                        },
+                        {
+                            label: 'Não licenciado',
+                            data: [wUnl, oUnl],
+                            backgroundColor: '#f87171',
+                            borderRadius: 4,
+                            barPercentage: 0.6,
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    indexAxis: 'y',
+                    scales: {
+                        x: {
+                            stacked: true,
+                            grid: { color: 'rgba(255,255,255,0.04)' },
+                            ticks: { stepSize: 1 },
+                        },
+                        y: {
+                            stacked: true,
+                            grid: { display: false },
+                        },
+                    },
+                    plugins: {
+                        legend: { position: 'bottom', labels: { padding: 20 } },
+                        tooltip: {
+                            backgroundColor: '#181d28',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            padding: 12,
+                            cornerRadius: 8,
+                        },
+                    },
+                    animation: { duration: 1000, easing: 'easeOutQuart' },
+                }
+            });
+
+            // ---- Chart 3: Top Softwares (Bar) ----
+            const topSw = software.slice(0, 8);
+            const swColors = ['#d4af37', '#c9a432', '#be9930', '#b38e2d', '#a8832a', '#9d7828', '#926d25', '#876223'];
+
+            new Chart(document.getElementById('chart-software'), {
+                type: 'bar',
+                data: {
+                    labels: topSw.map(s => s.name || '—'),
+                    datasets: [{
+                        label: 'Instalações',
+                        data: topSw.map(s => s.install_count),
+                        backgroundColor: swColors,
+                        borderRadius: 4,
+                        barPercentage: 0.65,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    indexAxis: 'y',
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255,255,255,0.04)' },
+                            ticks: { stepSize: 1 },
+                        },
+                        y: {
+                            grid: { display: false },
+                            ticks: {
+                                font: { size: 10 },
+                                callback: function(value) {
+                                    const label = this.getLabelForValue(value);
+                                    return label.length > 22 ? label.substring(0, 20) + '…' : label;
+                                },
+                            },
+                        },
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#181d28',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            padding: 12,
+                            cornerRadius: 8,
+                            callbacks: {
+                                label: ctx => `  ${ctx.raw} instalação(ões)`,
+                            },
+                        },
+                    },
+                    animation: { duration: 1000, easing: 'easeOutQuart' },
+                }
+            });
+
+            // ---- Chart 4: Coletas por dia (Line) ----
+            const scansByDay = {};
+            const successByDay = {};
+            const errorByDay = {};
             scans.forEach(s => {
+                if (!s.finished_at) return;
+                const day = s.finished_at.substring(0, 10);
+                scansByDay[day] = (scansByDay[day] || 0) + 1;
+                if (s.status === 'success') successByDay[day] = (successByDay[day] || 0) + 1;
+                else errorByDay[day] = (errorByDay[day] || 0) + 1;
+            });
+
+            const days = Object.keys(scansByDay).sort().slice(-14);
+            const dayLabels = days.map(d => {
+                const dt = new Date(d + 'T12:00:00');
+                return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+            });
+
+            new Chart(document.getElementById('chart-scans'), {
+                type: 'line',
+                data: {
+                    labels: dayLabels,
+                    datasets: [
+                        {
+                            label: 'Sucesso',
+                            data: days.map(d => successByDay[d] || 0),
+                            borderColor: '#34d399',
+                            backgroundColor: 'rgba(52, 211, 153, 0.08)',
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 3,
+                            pointHoverRadius: 6,
+                            borderWidth: 2,
+                        },
+                        {
+                            label: 'Erro',
+                            data: days.map(d => errorByDay[d] || 0),
+                            borderColor: '#f87171',
+                            backgroundColor: 'rgba(248, 113, 113, 0.08)',
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 3,
+                            pointHoverRadius: 6,
+                            borderWidth: 2,
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255,255,255,0.04)' },
+                            ticks: { stepSize: 1 },
+                        },
+                        x: {
+                            grid: { display: false },
+                        },
+                    },
+                    plugins: {
+                        legend: { position: 'bottom', labels: { padding: 20 } },
+                        tooltip: {
+                            backgroundColor: '#181d28',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            padding: 12,
+                            cornerRadius: 8,
+                            mode: 'index',
+                            intersect: false,
+                        },
+                    },
+                    interaction: { mode: 'index', intersect: false },
+                    animation: { duration: 1200, easing: 'easeOutQuart' },
+                }
+            });
+
+            // ---- Tabela últimas coletas ----
+            const tbody = document.querySelector('#scans-table tbody');
+            const recentScans = scans.slice(0, 15);
+            recentScans.forEach(s => {
                 const badgeClass = s.status === 'success' ? 'badge-success' : 'badge-danger';
                 const badgeText = s.status === 'success' ? 'Sucesso' : 'Erro';
                 const dt = s.finished_at ? new Date(s.finished_at).toLocaleString('pt-BR') : '—';
@@ -89,7 +352,7 @@
                     <td>${dt}</td>
                 </tr>`;
             });
-            if (scans.length === 0) {
+            if (recentScans.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--text-muted)">Nenhuma coleta registrada</td></tr>';
             }
         }
@@ -99,12 +362,11 @@
             if (!el) return;
             const duration = 600;
             const start = performance.now();
-            const initial = 0;
 
             function update(now) {
                 const progress = Math.min((now - start) / duration, 1);
                 const eased = 1 - Math.pow(1 - progress, 3);
-                el.textContent = Math.round(initial + (target - initial) * eased);
+                el.textContent = Math.round(target * eased);
                 if (progress < 1) requestAnimationFrame(update);
             }
             requestAnimationFrame(update);
