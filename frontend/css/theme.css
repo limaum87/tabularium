@@ -712,6 +712,9 @@ a:hover { color: #e8c84a; }
     border-radius: var(--radius-md);
     padding: 24px;
     position: relative;
+    height: 290px;
+    display: flex;
+    flex-direction: column;
 }
 
 .chart-panel .chart-title {
@@ -719,17 +722,15 @@ a:hover { color: #e8c84a; }
     font-weight: 600;
     font-size: 13px;
     color: var(--text-secondary);
-    margin-bottom: 20px;
+    margin-bottom: 16px;
     letter-spacing: -0.01em;
+    flex-shrink: 0;
 }
 
-.chart-panel canvas {
-    width: 100% !important;
-    height: 200px !important;
-}
-
-.chart-panel.chart-full canvas {
-    height: 180px !important;
+.chart-container {
+    position: relative;
+    flex: 1;
+    min-height: 0;
 }
 
 /* ---- Full-width chart ---- */
