@@ -724,7 +724,12 @@ a:hover { color: #e8c84a; }
 }
 
 .chart-panel canvas {
-    max-height: 260px;
+    width: 100% !important;
+    height: 200px !important;
+}
+
+.chart-panel.chart-full canvas {
+    height: 180px !important;
 }
 
 /* ---- Full-width chart ---- */
@@ -732,9 +737,7 @@ a:hover { color: #e8c84a; }
     grid-column: 1 / -1;
 }
 
-.chart-panel.chart-full canvas {
-    max-height: 220px;
-}
+
 
 @media (max-width: 900px) {
     .charts-grid {
