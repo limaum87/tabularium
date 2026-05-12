@@ -12,7 +12,7 @@
 - [x] **0.3** Criar `nginx.conf` como proxy reverso para a API
 - [x] **0.4** Criar `Dockerfile` do backend FastAPI
 - [x] **0.5** Criar estrutura de pastas `backend/` e `frontend/`
-- [ ] **0.6** Testar `docker compose up` — MySQL acessível e healthy
+- [x] **0.6** Testar `docker compose up` — MySQL acessível e healthy
 
 ---
 
@@ -34,85 +34,86 @@
 - [x] **1.8** Implementar `POST /api/hosts/checkin` (receber payload do collector)
 - [x] **1.9** Implementar `GET /api/hosts` e `GET /api/hosts/{id}`
 - [x] **1.10** Implementar endpoints de leitura (`/software`, `/licenses`, `/scans`, `/compliance`)
-- [ ] **1.11** Testes unitários dos endpoints com `pytest`
+- [ ] **1.11** Testes unitários dos endpoints com `pytest` _(postergado)_
 
 ---
 
 ## Fase 2 — Interface Web
 
-- [ ] **2.1** Criar estrutura base do frontend (pasta `static/` ou `templates/`)
-- [ ] **2.2** Configurar Bootstrap 5 + DataTables + Chart.js via CDN
-- [ ] **2.3** Página de **Login** (`/login.html`)
-  - [ ] Formulário email + senha
-  - [ ] Armazenar JWT no `localStorage`
-  - [ ] Redirecionar para dashboard após login
-  - [ ] Interceptar 401 para redirecionar ao login
-- [ ] **2.4** **Layout base** (navbar, sidebar, logout)
-  - [ ] Navbar com nome do usuário e botão sair
-  - [ ] Sidebar com links para cada página
-  - [ ] Proteção de rota (redirecionar se não logado)
-- [ ] **2.5** Página **Dashboard** (`/dashboard.html`)
-  - [ ] Cards: total hosts, online, offline, alertas de licença
-  - [ ] Gráfico: hosts online/offline ao longo do tempo
-  - [ ] Gráfico: top softwares instalados
-  - [ ] Últimas coletas (tabela resumo)
-- [ ] **2.6** Página **Hosts** (`/hosts.html`)
-  - [ ] DataTable com colunas: hostname, IP, OS, status, última coleta
-  - [ ] Filtros: online/offline, domínio, busca textual
-  - [ ] Link para detalhe do host
-- [ ] **2.7** Página **Detalhe do Host** (`/host-detail.html`)
-  - [ ] Abas: Hardware / Rede / Discos / Software / Licenças
-  - [ ] Cabeçalho com hostname, status, última coleta
-  - [ ] Cada aba com tabela ou cards dos dados
-- [ ] **2.8** Página **Licenças** (`/licenses.html`)
-  - [ ] Tabela: hosts × status de licença Windows/Office
-  - [ ] Filtro por status (Licensed, Unlicensed, Notification)
-  - [ ] Indicadores visuais (verde/amarelo/vermelho)
-- [ ] **2.9** Página **Softwares** (`/software.html`)
-  - [ ] DataTable: nome, versão, publisher, qtd instalações
-  - [ ] Agrupamento por software (expandir para ver em quais hosts)
-  - [ ] Filtro e busca
-- [ ] **2.10** Página **Usuários** (`/users.html`) — admin apenas
-  - [ ] Lista de usuários com role e status
-  - [ ] Criar novo usuário
-  - [ ] Editar role / ativar-desativar
-  - [ ] Oculta para roles não-admin no menu
+- [x] **2.1** Criar estrutura base do frontend
+- [x] **2.2** Design system próprio (sem Bootstrap) + Chart.js via CDN
+- [x] **2.3** Página de **Login** (`/login.html`)
+  - [x] Formulário email + senha
+  - [x] Armazenar JWT no `localStorage`
+  - [x] Redirecionar para dashboard após login
+  - [x] Interceptar 401 para redirecionar ao login
+- [x] **2.4** **Layout base** (sidebar, header, logout)
+  - [x] Sidebar com navegação por seções
+  - [x] Nome do usuário e avatar com iniciais
+  - [x] Proteção de rota (redirecionar se não logado)
+- [x] **2.5** Página **Dashboard** (`/dashboard.html`)
+  - [x] Cards: total hosts, online, offline, alertas de licença
+  - [x] Gráfico doughnut: hosts online/offline
+  - [x] Gráfico bar: compliance de licenças
+  - [x] Gráfico bar: top 8 softwares
+  - [x] Gráfico line: coletas por dia
+  - [x] Últimas coletas (tabela)
+- [x] **2.6** Página **Hosts** (`/hosts.html`)
+  - [x] Tabela com hostname, domínio, status, último contato
+  - [x] Busca textual em tempo real
+  - [x] Link para detalhe do host
+- [x] **2.7** Página **Detalhe do Host** (`/host-detail.html`)
+  - [x] Hardware, Rede, Discos, Licenças, Software
+  - [x] Barra de uso de disco com cores dinâmicas
+  - [x] Cabeçalho com hostname, status, último contato
+- [x] **2.8** Página **Licenças** (`/licenses.html`)
+  - [x] Tabela: hosts × status de licença
+  - [x] Filtro por status e produto
+  - [x] Badges visuais (verde/vermelho/amarelo)
+- [x] **2.9** Página **Softwares** (`/software.html`)
+  - [x] Tabela: nome, versão, publisher, qtd instalações
+  - [x] Busca textual
+- [x] **2.10** Página **Usuários** (`/users.html`) — admin apenas
+  - [x] Lista de usuários com role e status
+  - [x] Modal para criar novo usuário
+  - [x] Ativar/desativar
+  - [x] Oculta para roles não-admin no menu
 
 ---
 
 ## Fase 3 — Collector Python
 
-- [ ] **3.1** Inicializar projeto Python (venv, requirements.txt)
-- [ ] **3.2** Configurar conexão LDAP (`ldap3`)
-  - [ ] Ler configuração do AD (server, bind DN, password, base DN)
-  - [ ] Consultar computadores em OUs específicas
-  - [ ] Retornar lista de hostnames
-- [ ] **3.3** Implementar teste de conectividade
-  - [ ] ICMP ping antes de tentar WinRM
-  - [ ] Timeout configurável (ex.: 3s)
-  - [ ] Marcar hosts offline no log
-- [ ] **3.4** Implementar módulo WinRM
-  - [ ] Conexão via `pywinrm` (HTTP ou HTTPS)
-  - [ ] Script PowerShell para coletar **hardware**
-  - [ ] Script PowerShell para coletar **discos**
-  - [ ] Script PowerShell para coletar **rede**
-  - [ ] Script PowerShell para coletar **Windows / licença**
-  - [ ] Script PowerShell para coletar **Office / licença**
-  - [ ] Script PowerShell para coletar **softwares instalados**
-  - [ ] Consolidar tudo em um JSON por host
-- [ ] **3.5** Implementar envio à API
-  - [ ] `POST /api/hosts/checkin` com autenticação (token do collector)
-  - [ ] Retry em caso de falha (ex.: 3 tentativas)
-  - [ ] Log de sucesso/erro por host
-- [ ] **3.6** Logging estruturado
-  - [ ] Log por host (coletado, offline, erro WinRM, erro API)
-  - [ ] Resumo ao final da execução (X coletados, Y offline, Z erros)
-- [ ] **3.7** Agendamento
-  - [ ] Execução via `schedule` ou cron do Linux
-  - [ ] Intervalo configurável (ex.: a cada 6h)
-- [ ] **3.8** Arquivo de configuração
-  - [ ] `config.yaml` ou `.env` com: AD, WinRM, API URL, intervalos
-  - [ ] Validação ao iniciar
+- [x] **3.1** Inicializar projeto Python (venv, requirements.txt)
+- [x] **3.2** Configurar conexão LDAP (`ldap3`)
+  - [x] Ler configuração do AD (server, bind DN, password, base DN)
+  - [x] Consultar computadores em OUs específicas
+  - [x] Retornar lista de hostnames
+- [x] **3.3** Implementar teste de conectividade
+  - [x] ICMP ping antes de tentar WinRM
+  - [x] Timeout configurável (ex.: 3s)
+  - [x] Marcar hosts offline no log
+- [x] **3.4** Implementar módulo WinRM
+  - [x] Conexão via `pywinrm` (HTTP ou HTTPS)
+  - [x] Script PowerShell para coletar **hardware**
+  - [x] Script PowerShell para coletar **discos**
+  - [x] Script PowerShell para coletar **rede**
+  - [x] Script PowerShell para coletar **Windows / licença**
+  - [x] Script PowerShell para coletar **Office / licença**
+  - [x] Script PowerShell para coletar **softwares instalados**
+  - [x] Consolidar tudo em um JSON por host
+- [x] **3.5** Implementar envio à API
+  - [x] `POST /api/hosts/checkin` com autenticação (token do collector)
+  - [x] Retry em caso de falha (ex.: 3 tentativas)
+  - [x] Log de sucesso/erro por host
+- [x] **3.6** Logging estruturado
+  - [x] Log por host (coletado, offline, erro WinRM, erro API)
+  - [x] Resumo ao final da execução (X coletados, Y offline, Z erros)
+- [x] **3.7** Agendamento
+  - [x] Execução via `schedule` (loop infinito)
+  - [x] Intervalo configurável (ex.: a cada 6h)
+- [x] **3.8** Arquivo de configuração
+  - [x] `config.yaml` com: AD, WinRM, API URL, intervalos
+  - [x] Suporte a env COLLECTOR_CONFIG e --config
 
 ---
 

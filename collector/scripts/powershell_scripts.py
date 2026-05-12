@@ -1,0 +1,130 @@
+"""
+Scripts PowerShell executados remotamente via WinRM.
+Cada função retorna um script PS1 como string.
+Todos retornam JSON para parsing no collector.
+"""
+
+
+def ps_hardware():
+    """Coleta dados de hardware do host."""
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+$obj = @{
+    manufacturer = (Get-CimInstance Win32_ComputerSystem).Manufacturer
+    model        = (Get-CimInstance Win32_ComputerSystem).Model
+    serial       = (Get-CimInstance Win32_BIOS).SerialNumber
+    cpu          = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+    ram_gb       = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
+    bios_version = (Get-CimInstance Win32_BIOS).SMBIOSBIOSVersion
+    last_boot    = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString("yyyy-MM-dd HH:mm:ss")
+}
+$obj | ConvertTo-Json -Compress
+"""
+
+
+def ps_disks():
+    """Coleta dados de discos/volumes."""
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+    @{
+        drive      = $_.DeviceID
+        total_gb   = [math]::Round($_.Size / 1GB, 1)
+        free_gb    = [math]::Round($_.FreeSpace / 1GB, 1)
+        filesystem = $_.FileSystem
+    }
+} | ConvertTo-Json -Compress
+"""
+
+
+def ps_network():
+    """Coleta dados de adaptadores de rede ativos."""
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True" | ForEach-Object {
+    @{
+        ip            = ($_.IPAddress | Where-Object { $_ -match "\d+\.\d+\.\d+\.\d+" }) -join ","
+        mac           = $_.MACAddress
+        gateway       = ($_.DefaultIPGateway -join ",")
+        dns           = ($_.DNSServerSearchOrder -join ",")
+        adapter_name  = (Get-CimInstance Win32_NetworkAdapter -Filter "Index=$($_.SettingID.Split('=')[-1].Trim('}'))").NetConnectionID
+    }
+} | ConvertTo-Json -Compress
+"""
+
+
+def ps_windows_license():
+    """Coleta status de licença do Windows."""
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+$os = Get-CimInstance Win32_OperatingSystem
+try {
+    $lic = ciminstance SoftwareLicensingProduct -Filter "Name like '%Windows%' and PartialProductKey <> null" | Select-Object -First 1
+    $oem = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
+} catch {}
+
+$obj = @{
+    product             = "windows"
+    edition             = $os.Caption -replace "Microsoft Windows ", ""
+    version             = if ($os.Version -match "^10\.0\.(\d+)") { $matches[1] } else { $os.Version }
+    build               = $os.BuildNumber
+    license_channel     = if ($lic) { $lic.ProductKeyChannel } else { "" }
+    license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+    partial_product_key = if ($lic) { $lic.PartialProductKey } else { "" }
+    oem_key_found       = [bool]$oem
+}
+$obj | ConvertTo-Json -Compress
+"""
+
+
+def ps_office_license():
+    """Coleta status de licença do Office (se instalado)."""
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+try {
+    $lic = ciminstance SoftwareLicensingProduct -Filter "Name like '%Office%' and PartialProductKey <> null" | Select-Object -First 1
+    if (-not $lic) {
+        # Tenta via Registry
+        $keys = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Office" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "\\1[56789]\." -or $_.Name -match "\\16\." }
+        $regVer = if ($keys) { ($keys[-1].Name -split "\\")[-1] } else { "" }
+        @{ product = "office"; installed = [bool]$regVer; version = $regVer; detection_method = "Registry" } | ConvertTo-Json -Compress
+        return
+    }
+    @{
+        product             = "office"
+        installed           = $true
+        version             = ($lic.Name -replace "Office ","" -replace " .*","").Trim()
+        edition             = $lic.Name
+        license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+        partial_product_key = $lic.PartialProductKey
+        channel             = $lic.ProductKeyChannel
+        detection_method    = "WMI"
+    } | ConvertTo-Json -Compress
+} catch {
+    @{ product = "office"; installed = $false; detection_method = "none" } | ConvertTo-Json -Compress
+}
+"""
+
+
+def ps_software():
+    """Coleta softwares instalados (via Registry — mais completo que WMI)."""
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+$paths = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+)
+$items = @()
+foreach ($path in $paths) {
+    $items += Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName }
+}
+$items | Sort-Object DisplayName -Unique | ForEach-Object {
+    @{
+        name              = $_.DisplayName
+        version           = $_.DisplayVersion
+        publisher         = $_.Publisher
+        install_date      = $_.InstallDate
+        install_location  = $_.InstallLocation
+    }
+} | ConvertTo-Json -Compress
+"""

@@ -18,3 +18,6 @@ mysql_data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Collector logs
+collector/logs/

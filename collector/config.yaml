@@ -1,0 +1,46 @@
+# ============================================================
+# Tabularium Collector — Configuração
+# ============================================================
+
+# ---- Active Directory ----
+ad:
+  server: "ldap://dc01.empresa.local"
+  bind_dn: "CN=tabularium,OU=ServiceAccounts,DC=empresa,DC=local"
+  password: "CHANGE-ME"
+  base_dn: "DC=empresa,DC=local"
+  search_filter: "(objectClass=computer)"
+  # OUs específicas (vazio = busca em todo o base_dn)
+  ou_list: []
+
+# ---- WinRM ----
+winrm:
+  username: "empresa\\tabularium"
+  password: "CHANGE-ME"
+  scheme: "http"          # http ou https
+  port: 5985              # 5985 (http) ou 5986 (https)
+  timeout: 30             # segundos
+  verify_ssl: false
+
+# ---- Conectividade ----
+ping:
+  enabled: true
+  timeout: 3              # segundos
+
+# ---- API Backend ----
+api:
+  url: "http://localhost:8091"
+  token: "token-do-collector"
+  retry_attempts: 3
+  retry_delay: 5          # segundos
+
+# ---- Agendamento ----
+schedule:
+  enabled: true
+  interval_hours: 6
+
+# ---- Logging ----
+logging:
+  level: "INFO"           # DEBUG, INFO, WARNING, ERROR
+  file: "logs/collector.log"
+  max_bytes: 10485760     # 10 MB
+  backup_count: 5
