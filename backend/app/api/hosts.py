@@ -132,7 +132,7 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
 
 # ---- Leitura ----
 
-@router.get("/", response_model=list[HostResponse])
+@router.get("", response_model=list[HostResponse])
 def list_hosts(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return db.query(Host).order_by(Host.hostname).all()
 
