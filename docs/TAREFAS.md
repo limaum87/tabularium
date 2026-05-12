@@ -10,30 +10,30 @@
 - [x] **0.1** Criar arquivo `.env` com credenciais do banco e variáveis do sistema
 - [x] **0.2** Criar `docker-compose.yml` (MySQL + Backend + Frontend + Nginx)
 - [x] **0.3** Criar `nginx.conf` como proxy reverso para a API
-- [ ] **0.4** Criar `Dockerfile` do backend FastAPI
-- [ ] **0.5** Criar estrutura de pastas `backend/` e `frontend/`
+- [x] **0.4** Criar `Dockerfile` do backend FastAPI
+- [x] **0.5** Criar estrutura de pastas `backend/` e `frontend/`
 - [ ] **0.6** Testar `docker compose up` — MySQL acessível e healthy
 
 ---
 
 ## Fase 1 — Fundação (Backend + Banco)
 
-- [ ] **1.1** Inicializar projeto FastAPI (estrutura de pastas, requirements.txt)
-- [ ] **1.2** Configurar conexão com MySQL (SQLAlchemy / pymysql)
-- [ ] **1.3** Criar migration inicial com todas as tabelas
-- [ ] **1.4** Implementar sistema de usuários
-  - [ ] Modelo `users` com bcrypt
-  - [ ] `POST /api/auth/login` → retorna JWT
-  - [ ] `POST /api/auth/register` (admin apenas)
-  - [ ] `GET /api/auth/me`
-  - [ ] `PUT /api/auth/password`
-  - [ ] Middleware de validação JWT
-- [ ] **1.5** CRUD de usuários (`GET /api/users`, `PUT /api/users/{id}`, `DELETE /api/users/{id}`)
-- [ ] **1.6** Seed do banco com usuário `admin` padrão
-- [ ] **1.7** Criar tabelas de inventário (`hosts`, `host_hardware`, `host_network`, etc.)
-- [ ] **1.8** Implementar `POST /api/hosts/checkin` (receber payload do collector)
-- [ ] **1.9** Implementar `GET /api/hosts` e `GET /api/hosts/{id}`
-- [ ] **1.10** Implementar endpoints de leitura (`/software`, `/licenses`, `/scans`, `/compliance`)
+- [x] **1.1** Inicializar projeto FastAPI (estrutura de pastas, requirements.txt)
+- [x] **1.2** Configurar conexão com MySQL (SQLAlchemy / pymysql)
+- [x] **1.3** Criar migration inicial com todas as tabelas
+- [x] **1.4** Implementar sistema de usuários
+  - [x] Modelo `users` com bcrypt
+  - [x] `POST /api/auth/login` → retorna JWT
+  - [x] `POST /api/auth/register` (admin apenas)
+  - [x] `GET /api/auth/me`
+  - [x] `PUT /api/auth/password`
+  - [x] Middleware de validação JWT
+- [x] **1.5** CRUD de usuários (`GET /api/users`, `PUT /api/users/{id}`, `DELETE /api/users/{id}`)
+- [x] **1.6** Seed do banco com usuário `admin` padrão
+- [x] **1.7** Criar tabelas de inventário (`hosts`, `host_hardware`, `host_network`, etc.)
+- [x] **1.8** Implementar `POST /api/hosts/checkin` (receber payload do collector)
+- [x] **1.9** Implementar `GET /api/hosts` e `GET /api/hosts/{id}`
+- [x] **1.10** Implementar endpoints de leitura (`/software`, `/licenses`, `/scans`, `/compliance`)
 - [ ] **1.11** Testes unitários dos endpoints com `pytest`
 
 ---
