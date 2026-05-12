@@ -63,6 +63,23 @@ services:
     networks:
       - tabularium-net
 
+  # ---- Collector ----
+  collector:
+    build:
+      context: ./collector
+      dockerfile: Dockerfile
+    container_name: tabularium-collector
+    restart: unless-stopped
+    environment:
+      COLLECTOR_API_URL: http://backend:8000
+      COLLECTOR_API_TOKEN: ${COLLECTOR_API_TOKEN}
+    depends_on:
+      - backend
+    networks:
+      - tabularium-net
+    profiles:
+      - collector
+
 volumes:
   mysql_data:
 

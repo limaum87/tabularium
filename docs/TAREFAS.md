@@ -119,12 +119,12 @@
 
 ## Fase 4 — Integração e Testes
 
-- [ ] **4.1** Teste integrado: collector → API → banco → frontend
+- [x] **4.1** Teste integrado: collector → API → banco → frontend (seed demo 20 hosts OK)
 - [ ] **4.2** Testar com pelo menos 5 máquinas reais do domínio
 - [ ] **4.3** Validar dados: conferir se o que o PowerShell retorna bate com o que aparece no frontend
 - [ ] **4.4** Ajustar timeouts e tratamento de erros do WinRM
-- [ ] **4.5** Docker Compose para subir tudo (MySQL + FastAPI + Frontend)
-- [ ] **4.6** Documentação de instalação e uso (`README.md`)
+- [x] **4.5** Docker Compose para subir tudo (MySQL + FastAPI + Frontend + Collector)
+- [x] **4.6** Documentação de instalação e uso (`README.md`)
 
 ---
 
