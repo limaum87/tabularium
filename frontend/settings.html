@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Configurações</title>
+    <link rel="stylesheet" href="/css/theme.css">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('settings');
+
+        const mainContent = document.querySelector('.main-content');
+
+        async function loadSettings() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <h1>Configurações</h1>
+                <p class="page-subtitle">Conexão com Active Directory e WinRM</p>
+            </div>
+            <div class="page-body">
+                <!-- LDAP / AD -->
+                <div class="panel animate-in" style="margin-bottom:20px;">
+                    <div class="panel-header">
+                        <span class="panel-title">Active Directory (LDAP)</span>
+                        <button class="btn-primary-accent" onclick="saveAndTestLdap()" id="btn-ldap-test" style="padding:8px 18px;font-size:12px;">Salvar & Testar Conexão</button>
+                    </div>
+                    <div class="panel-body" style="padding:24px;">
+                        <div id="ldap-alert"></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                            <div>
+                                <label class="form-label-dark">Servidor LDAP</label>
+                                <input type="text" class="form-control-dark" id="ad-server" placeholder="ldap://dc01.empresa.local">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Bind DN</label>
+                                <input type="text" class="form-control-dark" id="ad-bind-dn" placeholder="CN=tabularium,OU=ServiceAccounts,DC=empresa,DC=local">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Senha</label>
+                                <input type="password" class="form-control-dark" id="ad-password" placeholder="Senha da conta de serviço">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Base DN</label>
+                                <input type="text" class="form-control-dark" id="ad-base-dn" placeholder="DC=empresa,DC=local">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Filtro de Busca</label>
+                                <input type="text" class="form-control-dark" id="ad-filter" placeholder="(objectClass=computer)">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">OUs (separadas por ;)</label>
+                                <input type="text" class="form-control-dark" id="ad-ous" placeholder="OU=Computadores,DC=empresa,DC=local">
+                            </div>
+                        </div>
+                        <div id="ldap-result" style="margin-top:16px;display:none;"></div>
+                    </div>
+                </div>
+
+                <!-- WinRM -->
+                <div class="panel animate-in animate-in-delay-1" style="margin-bottom:20px;">
+                    <div class="panel-header">
+                        <span class="panel-title">WinRM (Coleta Remota)</span>
+                        <button class="btn-primary-accent" onclick="saveAndTestWinrm()" id="btn-winrm-test" style="padding:8px 18px;font-size:12px;">Salvar & Testar</button>
+                    </div>
+                    <div class="panel-body" style="padding:24px;">
+                        <div id="winrm-alert"></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                            <div>
+                                <label class="form-label-dark">Usuário WinRM</label>
+                                <input type="text" class="form-control-dark" id="winrm-user" placeholder="empresa\\tabularium">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Senha WinRM</label>
+                                <input type="password" class="form-control-dark" id="winrm-password" placeholder="Senha">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Esquema</label>
+                                <select class="form-control-dark" id="winrm-scheme">
+                                    <option value="http">HTTP (porta 5985)</option>
+                                    <option value="https">HTTPS (porta 5986)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Porta</label>
+                                <input type="number" class="form-control-dark" id="winrm-port" value="5985">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Timeout (segundos)</label>
+                                <input type="number" class="form-control-dark" id="winrm-timeout" value="30">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Host para Teste</label>
+                                <input type="text" class="form-control-dark" id="winrm-test-host" placeholder="HOST-NAME de uma máquina para testar">
+                            </div>
+                        </div>
+                        <div id="winrm-result" style="margin-top:16px;display:none;"></div>
+                    </div>
+                </div>
+
+                <!-- Agendamento -->
+                <div class="panel animate-in animate-in-delay-2" style="margin-bottom:20px;">
+                    <div class="panel-header">
+                        <span class="panel-title">Agendamento do Collector</span>
+                        <button class="btn-primary-accent" onclick="saveSchedule()" style="padding:8px 18px;font-size:12px;">Salvar</button>
+                    </div>
+                    <div class="panel-body" style="padding:24px;">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                            <div>
+                                <label class="form-label-dark">Intervalo de Coleta (horas)</label>
+                                <input type="number" class="form-control-dark" id="schedule-interval" value="6" min="1" max="168">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Ping Timeout (segundos)</label>
+                                <input type="number" class="form-control-dark" id="ping-timeout" value="3" min="1" max="30">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            // Carregar configurações salvas
+            const res = await apiFetch('/api/settings');
+            if (res && res.ok) {
+                const data = await res.json();
+
+                // AD
+                if (data.ad) {
+                    if (data.ad.server) document.getElementById('ad-server').value = data.ad.server;
+                    if (data.ad.bind_dn) document.getElementById('ad-bind-dn').value = data.ad.bind_dn;
+                    if (data.ad.password) document.getElementById('ad-password').value = data.ad.password;
+                    if (data.ad.base_dn) document.getElementById('ad-base-dn').value = data.ad.base_dn;
+                    if (data.ad.search_filter) document.getElementById('ad-filter').value = data.ad.search_filter;
+                    if (data.ad.ou_list) document.getElementById('ad-ous').value = Array.isArray(data.ad.ou_list) ? data.ad.ou_list.join('; ') : data.ad.ou_list;
+                }
+
+                // WinRM
+                if (data.winrm) {
+                    if (data.winrm.username) document.getElementById('winrm-user').value = data.winrm.username;
+                    if (data.winrm.password) document.getElementById('winrm-password').value = data.winrm.password;
+                    if (data.winrm.scheme) document.getElementById('winrm-scheme').value = data.winrm.scheme;
+                    if (data.winrm.port) document.getElementById('winrm-port').value = data.winrm.port;
+                    if (data.winrm.timeout) document.getElementById('winrm-timeout').value = data.winrm.timeout;
+                }
+
+                // Schedule
+                if (data.schedule) {
+                    if (data.schedule.interval_hours) document.getElementById('schedule-interval').value = data.schedule.interval_hours;
+                }
+                if (data.ping) {
+                    if (data.ping.timeout) document.getElementById('ping-timeout').value = data.ping.timeout;
+                }
+            }
+        }
+
+        function alertBox(id, success, message) {
+            const el = document.getElementById(id);
+            el.style.display = 'block';
+            el.style.padding = '12px 16px';
+            el.style.borderRadius = 'var(--radius-sm)';
+            el.style.fontSize = '13px';
+            el.style.border = '1px solid';
+            if (success) {
+                el.style.background = 'var(--success-dim)';
+                el.style.borderColor = 'rgba(52, 211, 153, 0.2)';
+                el.style.color = 'var(--success)';
+            } else {
+                el.style.background = 'var(--danger-dim)';
+                el.style.borderColor = 'rgba(248, 113, 113, 0.2)';
+                el.style.color = 'var(--danger)';
+            }
+            el.innerHTML = message;
+        }
+
+        async function saveSettingsBatch(settings) {
+            return apiFetch('/api/settings', {
+                method: 'PUT',
+                body: { settings },
+            });
+        }
+
+        async function saveAndTestLdap() {
+            const btn = document.getElementById('btn-ldap-test');
+            btn.disabled = true;
+            btn.textContent = 'Testando...';
+
+            const server = document.getElementById('ad-server').value;
+            const bind_dn = document.getElementById('ad-bind-dn').value;
+            const password = document.getElementById('ad-password').value;
+            const base_dn = document.getElementById('ad-base-dn').value;
+            const search_filter = document.getElementById('ad-filter').value || '(objectClass=computer)';
+            const ous_raw = document.getElementById('ad-ous').value;
+            const ou_list = ous_raw ? ous_raw.split(';').map(s => s.trim()).filter(Boolean) : [];
+
+            // Salvar
+            await saveSettingsBatch([
+                { key: 'server', value: server, category: 'ad' },
+                { key: 'bind_dn', value: bind_dn, category: 'ad' },
+                { key: 'password', value: password, category: 'ad' },
+                { key: 'base_dn', value: base_dn, category: 'ad' },
+                { key: 'search_filter', value: search_filter, category: 'ad' },
+                { key: 'ou_list', value: JSON.stringify(ou_list), category: 'ad' },
+            ]);
+
+            // Testar
+            const res = await apiFetch('/api/settings/test-ldap', {
+                method: 'POST',
+                body: { server, bind_dn, password, base_dn, search_filter },
+            });
+
+            if (res) {
+                const data = await res.json();
+                if (data.success) {
+                    let previewHtml = '';
+                    if (data.preview && data.preview.length > 0) {
+                        previewHtml = `<div style="margin-top:12px;"><span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;">Primeiros ${data.preview.length} computadores:</span><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">${data.preview.map(h => `<span style="font-family:var(--font-mono);font-size:11px;padding:3px 8px;background:var(--accent-dim);color:var(--accent);border-radius:4px;">${h}</span>`).join('')}</div></div>`;
+                    }
+                    alertBox('ldap-result', true, `✓ ${data.message}${previewHtml}`);
+                } else {
+                    alertBox('ldap-result', false, `✗ ${data.message}`);
+                }
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Salvar & Testar Conexão';
+        }
+
+        async function saveAndTestWinrm() {
+            const btn = document.getElementById('btn-winrm-test');
+            btn.disabled = true;
+            btn.textContent = 'Testando...';
+
+            const username = document.getElementById('winrm-user').value;
+            const password = document.getElementById('winrm-password').value;
+            const scheme = document.getElementById('winrm-scheme').value;
+            const port = parseInt(document.getElementById('winrm-port').value) || 5985;
+            const timeout = parseInt(document.getElementById('winrm-timeout').value) || 30;
+            const testHost = document.getElementById('winrm-test-host').value;
+
+            // Salvar
+            await saveSettingsBatch([
+                { key: 'username', value: username, category: 'winrm' },
+                { key: 'password', value: password, category: 'winrm' },
+                { key: 'scheme', value: scheme, category: 'winrm' },
+                { key: 'port', value: String(port), category: 'winrm' },
+                { key: 'timeout', value: String(timeout), category: 'winrm' },
+            ]);
+
+            if (!testHost) {
+                alertBox('winrm-result', true, '✓ Configurações do WinRM salvas. Informe um host para testar.');
+                btn.disabled = false;
+                btn.textContent = 'Salvar & Testar';
+                return;
+            }
+
+            // Testar
+            const res = await apiFetch('/api/settings/test-winrm', {
+                method: 'POST',
+                body: { hostname: testHost, username, password, scheme, port },
+            });
+
+            if (res) {
+                const data = await res.json();
+                if (data.success) {
+                    alertBox('winrm-result', true, `✓ ${data.message}`);
+                } else {
+                    alertBox('winrm-result', false, `✗ ${data.message}`);
+                }
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Salvar & Testar';
+        }
+
+        async function saveSchedule() {
+            const interval = parseInt(document.getElementById('schedule-interval').value) || 6;
+            const pingTimeout = parseInt(document.getElementById('ping-timeout').value) || 3;
+
+            await saveSettingsBatch([
+                { key: 'interval_hours', value: String(interval), category: 'schedule' },
+                { key: 'timeout', value: String(pingTimeout), category: 'ping' },
+            ]);
+
+            alertBox('ldap-alert', true, '✓ Configurações de agendamento salvas');
+            setTimeout(() => { document.getElementById('ldap-alert').style.display = 'none'; }, 3000);
+        }
+
+        loadSettings();
+    </script>
+</body>
+</html>

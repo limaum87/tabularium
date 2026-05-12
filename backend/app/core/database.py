@@ -142,3 +142,13 @@ class PurchasedLicense(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Setting(Base):
+    __tablename__ = "settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(100), unique=True, nullable=False, index=True)
+    value = Column(Text, nullable=True)
+    category = Column(String(50), nullable=False, default="general")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

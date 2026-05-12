@@ -32,6 +32,7 @@ function loadLayout(activePage) {
         navItems.push(
             { section: 'Administração' },
             { id: 'users', icon: '⊞', label: 'Usuários', href: '/users.html' },
+            { id: 'settings', icon: '⚙', label: 'Configurações', href: '/settings.html' },
         );
     }
 

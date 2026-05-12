@@ -6,7 +6,7 @@ import os
 from app.core.database import engine, Base, SessionLocal, User
 from app.core.config import settings
 from app.core.security import hash_password
-from app.api import auth, users, hosts, reports
+from app.api import auth, users, hosts, reports, settings as settings_api
 
 
 @asynccontextmanager
@@ -49,6 +49,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(hosts.router)
 app.include_router(reports.router)
+app.include_router(settings_api.router)
 
 
 # Health check
