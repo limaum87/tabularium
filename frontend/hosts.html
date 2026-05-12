@@ -5,9 +5,147 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tabularium — Hosts</title>
     <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .modal-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.65);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.2s ease;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 800px;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            animation: fadeInUp 0.3s var(--ease-out) both;
+        }
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .modal-header h3 {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            color: var(--text-primary);
+        }
+        .modal-close {
+            background: none; border: none;
+            color: var(--text-muted); font-size: 20px;
+            cursor: pointer; padding: 4px 8px;
+        }
+        .modal-close:hover { color: var(--text-primary); }
+        .modal-body {
+            padding: 20px 24px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .discovery-stats {
+            display: flex; gap: 16px;
+            font-size: 12px; font-family: var(--font-mono);
+            color: var(--text-muted);
+        }
+        .discovery-stats span.val { color: var(--text-primary); font-weight: 600; }
+        .checkbox-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .checkbox-row:last-child { border-bottom: none; }
+        .checkbox-row input[type="checkbox"] {
+            width: 16px; height: 16px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+        .checkbox-row .host-name {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            color: var(--text-primary);
+            flex: 1;
+        }
+        .checkbox-row .host-os {
+            font-size: 12px;
+            color: var(--text-muted);
+            max-width: 200px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .badge-new {
+            background: var(--accent-dim);
+            color: var(--accent);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+        }
+        .badge-existing {
+            background: rgba(255,255,255,0.06);
+            color: var(--text-muted);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+        }
+    </style>
 </head>
 <body>
     <div id="app"></div>
+
+    <!-- Modal Discovery -->
+    <div class="modal-overlay" id="discovery-modal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3>Discovery — Máquinas no Active Directory</h3>
+                <button class="modal-close" onclick="closeDiscovery()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div id="discovery-loading" style="text-align:center;padding:40px;color:var(--text-muted);font-family:var(--font-mono);">
+                    Consultando Active Directory...
+                </div>
+                <div id="discovery-content" style="display:none;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                        <div class="discovery-stats" id="discovery-stats"></div>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn-logout" onclick="toggleSelectAll(true)" style="font-size:11px;padding:4px 10px;">Todos</button>
+                            <button class="btn-logout" onclick="toggleSelectAll(false)" style="font-size:11px;padding:4px 10px;">Nenhum</button>
+                            <button class="btn-logout" onclick="selectOnlyNew()" style="font-size:11px;padding:4px 10px;">Só novos</button>
+                        </div>
+                    </div>
+                    <div id="discovery-list"></div>
+                </div>
+                <div id="discovery-error" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);" id="selected-count">0 selecionados</div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn-logout" onclick="closeDiscovery()">Cancelar</button>
+                    <button class="btn-primary-accent" onclick="importSelected()" id="btn-import" style="padding:8px 18px;font-size:12px;">Importar Selecionados</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script src="/js/auth.js"></script>
     <script src="/js/layout.js"></script>
@@ -16,12 +154,18 @@
         loadLayout('hosts');
 
         const mainContent = document.querySelector('.main-content');
+        let discoveredHosts = [];
 
         async function loadHosts() {
             mainContent.innerHTML = `
             <div class="page-header">
-                <h1>Hosts</h1>
-                <p class="page-subtitle">Máquinas inventariadas no domínio</p>
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                        <h1>Hosts</h1>
+                        <p class="page-subtitle">Máquinas inventariadas no domínio</p>
+                    </div>
+                    <button class="btn-primary-accent" onclick="openDiscovery()" style="padding:10px 20px;font-size:13px;">⟳ Descobrir Máquinas</button>
+                </div>
             </div>
             <div class="page-body">
                 <div class="panel animate-in">
@@ -76,7 +220,6 @@
 
             renderHosts(hosts);
 
-            // Search filter
             document.getElementById('search-hosts').addEventListener('input', (e) => {
                 const q = e.target.value.toLowerCase();
                 const filtered = hosts.filter(h =>
@@ -85,6 +228,160 @@
                 );
                 renderHosts(filtered);
             });
+        }
+
+        // ---- Discovery ----
+
+        function openDiscovery() {
+            document.getElementById('discovery-modal').classList.add('open');
+            document.getElementById('discovery-loading').style.display = 'block';
+            document.getElementById('discovery-content').style.display = 'none';
+            document.getElementById('discovery-error').style.display = 'none';
+            runDiscovery();
+        }
+
+        function closeDiscovery() {
+            document.getElementById('discovery-modal').classList.remove('open');
+        }
+
+        async function runDiscovery() {
+            try {
+                const res = await apiFetch('/api/discovery/run', { method: 'POST' });
+                if (!res) {
+                    showDiscoveryError('Erro de conexão com a API');
+                    return;
+                }
+                const data = await res.json();
+
+                if (!res.ok) {
+                    showDiscoveryError(data.detail || 'Erro no discovery');
+                    return;
+                }
+
+                discoveredHosts = data.hosts || [];
+
+                document.getElementById('discovery-loading').style.display = 'none';
+                document.getElementById('discovery-content').style.display = 'block';
+
+                // Stats
+                document.getElementById('discovery-stats').innerHTML = `
+                    <div>Total: <span class="val">${data.total}</span></div>
+                    <div>Novos: <span class="val" style="color:var(--accent)">${data.new_count}</span></div>
+                    <div>Já no banco: <span class="val">${data.existing_count}</span></div>
+                `;
+
+                // List
+                const list = document.getElementById('discovery-list');
+                list.innerHTML = '';
+
+                if (discoveredHosts.length === 0) {
+                    list.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted);font-family:var(--font-mono);">Nenhuma máquina encontrada</div>';
+                    return;
+                }
+
+                // Ordena: novos primeiro
+                discoveredHosts.sort((a, b) => {
+                    if (a.status === 'new' && b.status !== 'new') return -1;
+                    if (a.status !== 'new' && b.status === 'new') return 1;
+                    return a.hostname.localeCompare(b.hostname);
+                });
+
+                discoveredHosts.forEach((h, i) => {
+                    const badge = h.status === 'new'
+                        ? '<span class="badge-new">NOVO</span>'
+                        : '<span class="badge-existing">EXISTENTE</span>';
+                    list.innerHTML += `
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="disc-${i}" data-index="${i}" ${h.status === 'new' ? 'checked' : ''}>
+                        <span class="host-name">${h.hostname}</span>
+                        <span class="host-os">${h.os || '—'}</span>
+                        ${badge}
+                    </div>`;
+                });
+
+                updateSelectedCount();
+
+                // Listeners
+                list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.addEventListener('change', updateSelectedCount);
+                });
+
+            } catch (err) {
+                showDiscoveryError(err.message);
+            }
+        }
+
+        function showDiscoveryError(msg) {
+            document.getElementById('discovery-loading').style.display = 'none';
+            document.getElementById('discovery-error').style.display = 'block';
+            document.getElementById('discovery-error').innerHTML = `
+                <div style="padding:20px;text-align:center;">
+                    <div style="font-size:32px;margin-bottom:12px;">✗</div>
+                    <div style="color:var(--danger);font-family:var(--font-mono);font-size:13px;">${msg}</div>
+                    <div style="color:var(--text-muted);font-size:12px;margin-top:8px;">Verifique as configurações do AD em Configurações</div>
+                </div>`;
+        }
+
+        function updateSelectedCount() {
+            const checked = document.querySelectorAll('#discovery-list input[type="checkbox"]:checked');
+            document.getElementById('selected-count').textContent = `${checked.length} selecionados`;
+        }
+
+        function toggleSelectAll(checked) {
+            document.querySelectorAll('#discovery-list input[type="checkbox"]').forEach(cb => cb.checked = checked);
+            updateSelectedCount();
+        }
+
+        function selectOnlyNew() {
+            document.querySelectorAll('#discovery-list input[type="checkbox"]').forEach(cb => {
+                const idx = parseInt(cb.dataset.index);
+                cb.checked = discoveredHosts[idx].status === 'new';
+            });
+            updateSelectedCount();
+        }
+
+        async function importSelected() {
+            const btn = document.getElementById('btn-import');
+            const selected = [];
+
+            document.querySelectorAll('#discovery-list input[type="checkbox"]:checked').forEach(cb => {
+                const idx = parseInt(cb.dataset.index);
+                selected.push(discoveredHosts[idx].hostname);
+            });
+
+            if (selected.length === 0) {
+                alert('Selecione ao menos uma máquina');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Importando...';
+
+            try {
+                const res = await apiFetch('/api/discovery/import', {
+                    method: 'POST',
+                    body: { hostnames: selected },
+                });
+
+                if (res && res.ok) {
+                    const data = await res.json();
+                    closeDiscovery();
+                    loadHosts();
+                    // Feedback rápido
+                    const header = document.querySelector('.page-subtitle');
+                    if (header) {
+                        header.textContent = data.detail;
+                        header.style.color = 'var(--success)';
+                        setTimeout(() => {
+                            header.textContent = 'Máquinas inventariadas no domínio';
+                            header.style.color = '';
+                        }, 3000);
+                    }
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Importar Selecionados';
+            }
         }
 
         loadHosts();
