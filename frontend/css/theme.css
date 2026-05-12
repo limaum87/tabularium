@@ -250,6 +250,22 @@ a:hover { color: #e8c84a; }
     flex-shrink: 0;
 }
 
+.sidebar-nav .nav-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    background: var(--danger-dim);
+    color: var(--danger);
+    margin-left: auto;
+}
+
 .sidebar-footer {
     padding: 16px 20px;
     border-top: 1px solid var(--border-subtle);
@@ -382,6 +398,9 @@ a:hover { color: #e8c84a; }
 .stat-card.card-green::after { background: var(--success); }
 .stat-card.card-red::after { background: var(--danger); }
 .stat-card.card-blue::after { background: var(--info); }
+
+.stat-card.card-legacy::after { background: var(--warning); }
+.stat-card.card-legacy .stat-value { color: var(--warning); }
 
 .stat-card .stat-label {
     font-size: 11px;

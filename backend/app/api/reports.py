@@ -6,6 +6,7 @@ from app.core.database import (
     get_db, HostSoftware, HostLicense, ScanHistory, Host,
 )
 from app.core.security import get_current_user
+from app.api.hosts import _auto_legacy_check
 
 router = APIRouter(tags=["reports"])
 
@@ -77,27 +78,34 @@ def list_scans(limit: int = 50, db: Session = Depends(get_db), _=Depends(get_cur
 @router.get("/api/compliance")
 def compliance(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Resumo de compliance de licenças."""
-    total_hosts = db.query(Host).count()
-    online_hosts = db.query(Host).filter(Host.status == "online").count()
+    _auto_legacy_check(db)
+
+    active_hosts = db.query(Host).filter(Host.is_legacy == False)
+    total_hosts = active_hosts.count()
+    online_hosts = active_hosts.filter(Host.status == "online").count()
+    legacy_hosts = db.query(Host).filter(Host.is_legacy == True).count()
+
+    # Para licenças, filtra apenas hosts ativos
+    active_host_ids = [h.id for h in active_hosts.all()]
 
     windows_licensed = (
         db.query(HostLicense)
-        .filter(HostLicense.product == "windows", HostLicense.license_status == "Licensed")
+        .filter(HostLicense.product == "windows", HostLicense.license_status == "Licensed", HostLicense.host_id.in_(active_host_ids))
         .count()
     )
     windows_unlicensed = (
         db.query(HostLicense)
-        .filter(HostLicense.product == "windows", HostLicense.license_status != "Licensed")
+        .filter(HostLicense.product == "windows", HostLicense.license_status != "Licensed", HostLicense.host_id.in_(active_host_ids))
         .count()
     )
     office_licensed = (
         db.query(HostLicense)
-        .filter(HostLicense.product == "office", HostLicense.license_status == "Licensed")
+        .filter(HostLicense.product == "office", HostLicense.license_status == "Licensed", HostLicense.host_id.in_(active_host_ids))
         .count()
     )
     office_unlicensed = (
         db.query(HostLicense)
-        .filter(HostLicense.product == "office", HostLicense.license_status != "Licensed")
+        .filter(HostLicense.product == "office", HostLicense.license_status != "Licensed", HostLicense.host_id.in_(active_host_ids))
         .count()
     )
 
@@ -105,6 +113,7 @@ def compliance(db: Session = Depends(get_db), _=Depends(get_current_user)):
         "total_hosts": total_hosts,
         "online_hosts": online_hosts,
         "offline_hosts": total_hosts - online_hosts,
+        "legacy_hosts": legacy_hosts,
         "windows": {"licensed": windows_licensed, "unlicensed": windows_unlicensed},
         "office": {"licensed": office_licensed, "unlicensed": office_unlicensed},
     }

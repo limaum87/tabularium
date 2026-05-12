@@ -43,6 +43,8 @@ class Host(Base):
     hostname = Column(String(255), unique=True, nullable=False, index=True)
     domain = Column(String(255), nullable=True)
     status = Column(Enum("online", "offline", "unknown", name="host_status"), default="unknown")
+    is_legacy = Column(Boolean, default=False, nullable=False, index=True)
+    legacy_since = Column(DateTime, nullable=True)
     last_seen = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

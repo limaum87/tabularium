@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,27 @@ from app.core.security import get_current_user
 from app.schemas.schemas import CheckinPayload, HostResponse
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"])
+
+
+# ---- Constantes ----
+LEGACY_DAYS = 90  # Dias sem contato para considerar legado
+
+
+def _auto_legacy_check(db: Session):
+    """Marca como legado hosts sem contato há 90+ dias."""
+    threshold = datetime.utcnow() - timedelta(days=LEGACY_DAYS)
+    candidates = db.query(Host).filter(
+        Host.is_legacy == False,
+        Host.last_seen != None,
+        Host.last_seen < threshold,
+    ).all()
+    now = datetime.utcnow()
+    for host in candidates:
+        host.is_legacy = True
+        host.legacy_since = now
+        host.updated_at = now
+    if candidates:
+        db.commit()
 
 
 # ---- Checkin (collector) ----
@@ -27,6 +48,10 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
         host.status = "online"
         host.last_seen = now
         host.updated_at = now
+        # Se era legado, restaurar automaticamente ao fazer checkin
+        if host.is_legacy:
+            host.is_legacy = False
+            host.legacy_since = None
     else:
         host = Host(
             hostname=body.hostname,
@@ -134,7 +159,57 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[HostResponse])
 def list_hosts(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return db.query(Host).order_by(Host.hostname).all()
+    _auto_legacy_check(db)
+    return db.query(Host).filter(Host.is_legacy == False).order_by(Host.hostname).all()
+
+
+# ---- Legados ----
+
+@router.get("/legacy", response_model=list[HostResponse])
+def list_legacy(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Lista hosts legados (90+ dias sem contato)."""
+    _auto_legacy_check(db)
+    return (
+        db.query(Host)
+        .filter(Host.is_legacy == True)
+        .order_by(Host.last_seen.asc())
+        .all()
+    )
+
+
+@router.post("/{host_id}/restore")
+def restore_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Restaura um host legado para ativo."""
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+    if not host.is_legacy:
+        raise HTTPException(status_code=400, detail="Host não é legado")
+    host.is_legacy = False
+    host.legacy_since = None
+    host.last_seen = datetime.utcnow()  # Reseta para evitar re-marcação imediata
+    host.updated_at = datetime.utcnow()
+    db.commit()
+    return {"detail": f"Host {host.hostname} restaurado para ativo"}
+
+
+@router.delete("/{host_id}")
+def delete_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Exclui permanentemente um host e todos os dados associados."""
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+    hostname = host.hostname
+    # Remove dados associados
+    db.query(HostHardware).filter(HostHardware.host_id == host_id).delete()
+    db.query(HostDisk).filter(HostDisk.host_id == host_id).delete()
+    db.query(HostNetwork).filter(HostNetwork.host_id == host_id).delete()
+    db.query(HostLicense).filter(HostLicense.host_id == host_id).delete()
+    db.query(HostSoftware).filter(HostSoftware.host_id == host_id).delete()
+    db.query(ScanHistory).filter(ScanHistory.host_id == host_id).delete()
+    db.delete(host)
+    db.commit()
+    return {"detail": f"Host {hostname} excluído permanentemente"}
 
 
 @router.get("/{host_id}")

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Micros Legados</title>
+    <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .legacy-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .legacy-actions button {
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-medium);
+            background: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-family: var(--font-mono);
+            transition: all 0.2s;
+        }
+        .legacy-actions .btn-restore:hover {
+            border-color: var(--success);
+            color: var(--success);
+            background: var(--success-dim);
+        }
+        .legacy-actions .btn-delete:hover {
+            border-color: var(--danger);
+            color: var(--danger);
+            background: var(--danger-dim);
+        }
+        .days-since {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+        .days-critical {
+            background: var(--danger-dim);
+            color: var(--danger);
+        }
+        .days-warning {
+            background: var(--warning-dim);
+            color: var(--warning);
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.4;
+        }
+        .empty-state .empty-title {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        .empty-state .empty-desc {
+            font-size: 13px;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .confirm-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.65);
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.2s ease;
+        }
+        .confirm-overlay.open { display: flex; }
+        .confirm-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 440px;
+            padding: 28px;
+            animation: fadeInUp 0.3s var(--ease-out) both;
+        }
+        .confirm-box h3 {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+        }
+        .confirm-box p {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+        .confirm-box .confirm-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+        .btn-danger {
+            background: var(--danger);
+            color: #fff;
+            font-weight: 600;
+            font-size: 12px;
+            padding: 8px 18px;
+            border: none;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-family: var(--font-mono);
+            transition: all 0.2s;
+        }
+        .btn-danger:hover {
+            filter: brightness(1.1);
+        }
+        .btn-cancel {
+            background: none;
+            border: 1px solid var(--border-medium);
+            color: var(--text-secondary);
+            font-size: 12px;
+            padding: 8px 18px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-family: var(--font-mono);
+            transition: all 0.2s;
+        }
+        .btn-cancel:hover {
+            border-color: var(--text-secondary);
+            color: var(--text-primary);
+        }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+
+    <!-- Confirm Dialog -->
+    <div class="confirm-overlay" id="confirm-dialog">
+        <div class="confirm-box">
+            <h3 id="confirm-title">Confirmar ação</h3>
+            <p id="confirm-message">Tem certeza?</p>
+            <div class="confirm-actions">
+                <button class="btn-cancel" onclick="closeConfirm()">Cancelar</button>
+                <button class="btn-danger" id="confirm-btn" onclick="confirmAction()">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('legacy');
+
+        const mainContent = document.querySelector('.main-content');
+        let legacyHosts = [];
+        let pendingAction = null;
+
+        async function loadLegacy() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div>
+                    <h1>Micros Legados</h1>
+                    <p class="page-subtitle">Máquinas sem contato há mais de 90 dias — possivelmente desativadas, trocadas ou formatadas</p>
+                </div>
+            </div>
+            <div class="page-body">
+                <div class="panel animate-in">
+                    <div class="panel-header">
+                        <span class="panel-title">Hosts Legados</span>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <input type="text" class="form-control-dark" id="search-legacy" placeholder="Buscar hostname..." style="width:240px;padding:8px 14px;font-size:12px;">
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table" id="legacy-table">
+                            <thead>
+                                <tr>
+                                    <th>Hostname</th>
+                                    <th>Domínio</th>
+                                    <th>Último Contato</th>
+                                    <th>Dias Inativo</th>
+                                    <th>Legado Desde</th>
+                                    <th style="text-align:right;">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                        <div class="empty-state" id="empty-state" style="display:none;">
+                            <div class="empty-icon">✓</div>
+                            <div class="empty-title">Nenhum micro legado</div>
+                            <div class="empty-desc">Todos os hosts inventariados tiveram contato nos últimos 90 dias. Volte mais tarde para verificar.</div>
+                        </div>
+                        <div id="loading-state" style="text-align:center;padding:40px;color:var(--text-muted);font-family:var(--font-mono);">
+                            Carregando...
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            const res = await apiFetch('/api/hosts/legacy');
+            if (!res) {
+                document.getElementById('loading-state').textContent = 'Erro ao carregar dados';
+                return;
+            }
+            legacyHosts = await res.json();
+
+            document.getElementById('loading-state').style.display = 'none';
+            renderLegacy(legacyHosts);
+
+            document.getElementById('search-legacy').addEventListener('input', (e) => {
+                const q = e.target.value.toLowerCase();
+                const filtered = legacyHosts.filter(h =>
+                    h.hostname.toLowerCase().includes(q) ||
+                    (h.domain && h.domain.toLowerCase().includes(q))
+                );
+                renderLegacy(filtered);
+            });
+        }
+
+        function renderLegacy(list) {
+            const tbody = document.querySelector('#legacy-table tbody');
+            const emptyState = document.getElementById('empty-state');
+            const table = document.getElementById('legacy-table');
+
+            if (list.length === 0) {
+                table.style.display = 'none';
+                emptyState.style.display = 'block';
+                return;
+            }
+
+            table.style.display = '';
+            emptyState.style.display = 'none';
+            tbody.innerHTML = '';
+
+            const now = new Date();
+
+            list.forEach(h => {
+                const lastSeen = h.last_seen ? new Date(h.last_seen) : null;
+                const daysSince = lastSeen ? Math.floor((now - lastSeen) / (1000 * 60 * 60 * 24)) : '—';
+                const daysClass = daysSince === '—' ? '' : (daysSince > 180 ? 'days-critical' : 'days-warning');
+
+                const dt = lastSeen ? lastSeen.toLocaleString('pt-BR') : '—';
+                const legacyDt = h.legacy_since ? new Date(h.legacy_since).toLocaleString('pt-BR') : '—';
+
+                tbody.innerHTML += `<tr>
+                    <td class="mono">${h.hostname}</td>
+                    <td>${h.domain || '—'}</td>
+                    <td>${dt}</td>
+                    <td><span class="days-since ${daysClass}">${daysSince} dias</span></td>
+                    <td>${legacyDt}</td>
+                    <td style="text-align:right;">
+                        <div class="legacy-actions" style="justify-content:flex-end;">
+                            <button class="btn-restore" onclick="restoreHost(${h.id}, '${h.hostname}')">Restaurar</button>
+                            <button class="btn-delete" onclick="deleteHost(${h.id}, '${h.hostname}')">Excluir</button>
+                        </div>
+                    </td>
+                </tr>`;
+            });
+        }
+
+        async function restoreHost(id, hostname) {
+            pendingAction = {
+                type: 'restore',
+                id: id,
+                hostname: hostname,
+            };
+            document.getElementById('confirm-title').textContent = 'Restaurar Host';
+            document.getElementById('confirm-message').textContent =
+                `Deseja restaurar "${hostname}" para a lista de hosts ativos? Se a máquina voltar a contactar, ela será restaurada automaticamente.`;
+            document.getElementById('confirm-btn').textContent = 'Restaurar';
+            document.getElementById('confirm-btn').style.background = 'var(--success)';
+            document.getElementById('confirm-dialog').classList.add('open');
+        }
+
+        async function deleteHost(id, hostname) {
+            pendingAction = {
+                type: 'delete',
+                id: id,
+                hostname: hostname,
+            };
+            document.getElementById('confirm-title').textContent = 'Excluir Host Permanentemente';
+            document.getElementById('confirm-message').textContent =
+                `Tem certeza que deseja EXCLUIR "${hostname}" e todos os seus dados (hardware, software, licenças)? Esta ação não pode ser desfeita.`;
+            document.getElementById('confirm-btn').textContent = 'Excluir';
+            document.getElementById('confirm-btn').style.background = 'var(--danger)';
+            document.getElementById('confirm-dialog').classList.add('open');
+        }
+
+        function closeConfirm() {
+            document.getElementById('confirm-dialog').classList.remove('open');
+            pendingAction = null;
+        }
+
+        async function confirmAction() {
+            if (!pendingAction) return;
+            const action = pendingAction;
+            closeConfirm();
+
+            if (action.type === 'restore') {
+                const res = await apiFetch(`/api/hosts/${action.id}/restore`, { method: 'POST' });
+                if (res && res.ok) {
+                    showToast(`Host "${action.hostname}" restaurado com sucesso`, 'success');
+                    loadLegacy();
+                } else {
+                    showToast('Erro ao restaurar host', 'error');
+                }
+            } else if (action.type === 'delete') {
+                const res = await apiFetch(`/api/hosts/${action.id}`, { method: 'DELETE' });
+                if (res && res.ok) {
+                    showToast(`Host "${action.hostname}" excluído permanentemente`, 'success');
+                    loadLegacy();
+                } else {
+                    showToast('Erro ao excluir host', 'error');
+                }
+            }
+        }
+
+        function showToast(msg, type) {
+            const existing = document.querySelector('.toast-notification');
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.className = 'toast-notification';
+            const bgColor = type === 'success' ? 'var(--success-dim)' : 'var(--danger-dim)';
+            const textColor = type === 'success' ? 'var(--success)' : 'var(--danger)';
+            const borderColor = type === 'success' ? 'rgba(52, 211, 153, 0.2)' : 'rgba(248, 113, 113, 0.2)';
+            toast.style.cssText = `
+                position: fixed; bottom: 24px; right: 24px; z-index: 2000;
+                padding: 14px 22px; border-radius: var(--radius-md);
+                background: ${bgColor}; color: ${textColor};
+                border: 1px solid ${borderColor};
+                font-family: var(--font-mono); font-size: 12px;
+                animation: fadeInUp 0.3s var(--ease-out) both;
+                max-width: 400px;
+            `;
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.3s';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        loadLegacy();
+    </script>
+</body>
+</html>

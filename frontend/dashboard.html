@@ -48,6 +48,10 @@
                         <div class="stat-label">Offline</div>
                         <div class="stat-value" id="offline-hosts">—</div>
                     </div>
+                    <div class="stat-card card-legacy animate-in animate-in-delay-3">
+                        <div class="stat-label">Legados (90+ dias)</div>
+                        <div class="stat-value" id="legacy-hosts">—</div>
+                    </div>
                     <div class="stat-card card-blue animate-in animate-in-delay-3">
                         <div class="stat-label">Licenças em Alerta</div>
                         <div class="stat-value" id="license-alerts">—</div>
@@ -114,6 +118,7 @@
             animateValue('total-hosts', compliance.total_hosts);
             animateValue('online-hosts', compliance.online_hosts);
             animateValue('offline-hosts', compliance.offline_hosts);
+            animateValue('legacy-hosts', compliance.legacy_hosts || 0);
             animateValue('license-alerts', (compliance.windows?.unlicensed || 0) + (compliance.office?.unlicensed || 0));
 
             // ---- Chart 1: Hosts Online/Offline (Doughnut) ----

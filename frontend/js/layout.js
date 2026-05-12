@@ -23,6 +23,7 @@ function loadLayout(activePage) {
         { section: 'Geral' },
         { id: 'dashboard', icon: '◫', label: 'Dashboard', href: '/dashboard.html' },
         { id: 'hosts', icon: '⊡', label: 'Hosts', href: '/hosts.html' },
+        { id: 'legacy', icon: '⊘', label: 'Micros Legados', href: '/legacy.html', badge: true },
         { section: 'Inventário' },
         { id: 'software', icon: '◈', label: 'Softwares', href: '/software.html' },
         { id: 'licenses', icon: '◎', label: 'Licenças', href: '/licenses.html' },
@@ -41,7 +42,9 @@ function loadLayout(activePage) {
             return `<div class="nav-section">${item.section}</div>`;
         }
         const active = item.id === activePage ? ' active' : '';
-        return `<a href="${item.href}" class="nav-link${active}"><span class="nav-icon">${item.icon}</span>${item.label}</a>`;
+        const badgeId = item.badge ? ` id="nav-badge-${item.id}"` : '';
+        const badgeHTML = item.badge ? ` <span class="nav-badge" style="display:none;"></span>` : '';
+        return `<a href="${item.href}" class="nav-link${active}"${badgeId}><span class="nav-icon">${item.icon}</span>${item.label}${badgeHTML}</a>`;
     }).join('');
 
     app.innerHTML = `
@@ -85,5 +88,25 @@ function loadLayout(activePage) {
             const initials = name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
             document.getElementById('user-initials').textContent = initials;
         }
+    })();
+
+    // Load legacy badge count
+    (async () => {
+        const badge = document.getElementById('nav-badge-legacy');
+        if (!badge) return;
+        try {
+            const res = await apiFetch('/api/hosts/legacy');
+            if (res && res.ok) {
+                const legacyHosts = await res.json();
+                const count = legacyHosts.length;
+                if (count > 0) {
+                    const span = badge.querySelector('.nav-badge');
+                    if (span) {
+                        span.style.display = 'inline-flex';
+                        span.textContent = count;
+                    }
+                }
+            }
+        } catch(e) {}
     })();
 }

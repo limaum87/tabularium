@@ -66,6 +66,8 @@ class HostResponse(BaseModel):
     hostname: str
     domain: Optional[str] = None
     status: str
+    is_legacy: bool = False
+    legacy_since: Optional[datetime] = None
     last_seen: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

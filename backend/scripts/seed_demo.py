@@ -78,15 +78,19 @@ def random_mac():
     return ":".join([f"{random.randint(0, 255):02X}" for _ in range(6)])
 
 
-def generate_host(hostname, index):
-    """Gera payload de checkin para um host fictício."""
+def generate_host(hostname, index, force_days_ago=None):
+    """Gera payload de checkin para um host ficticio."""
     mfr = random.choice(MANUFACTURERS)
     model = random.choice(MODELS[mfr])
     is_online = random.random() > 0.15  # 85% online
 
-    last_seen = datetime.utcnow() - timedelta(
-        minutes=random.randint(1, 600) if is_online else random.randint(1440, 10080)
-    )
+    if force_days_ago:
+        is_online = False
+        last_seen = datetime.utcnow() - timedelta(days=force_days_ago)
+    else:
+        last_seen = datetime.utcnow() - timedelta(
+            minutes=random.randint(1, 600) if is_online else random.randint(1440, 10080)
+        )
 
     # Hardware
     hardware = {
@@ -203,8 +207,41 @@ def main():
             fail += 1
             print(f"  [{i:02d}/{len(HOSTNAMES)}] ✗ {hostname} — {e}")
 
+    # ---- Seed de hosts legados ----
+    legacy_hostnames = [
+        "OLD-FINANCE-04",
+        "OLD-RH-03",
+        "OLD-TI-HELPDESK-04",
+        "OLD-LOGISTICA-04",
+        "OLD-MARKETING-03",
+    ]
+
+    print(f"\nGerando {len(legacy_hostnames)} hosts legados...\n")
+
+    for i, hostname in enumerate(legacy_hostnames, 1):
+        days_ago = random.randint(91, 365)  # 91 a 365 dias sem contato
+        payload = generate_host(hostname, i, force_days_ago=days_ago)
+        try:
+            resp = requests.post(
+                f"{API_URL}/api/hosts/checkin",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=15,
+            )
+            if resp.status_code in (200, 201):
+                ok += 1
+                print(f"  [{i:02d}/{len(legacy_hostnames)}] ✓ {hostname} (será marcado legado)")
+            else:
+                fail += 1
+                print(f"  [{i:02d}/{len(legacy_hostnames)}] ✗ {hostname} — HTTP {resp.status_code}: {resp.text[:80]}")
+        except Exception as e:
+            fail += 1
+            print(f"  [{i:02d}/{len(legacy_hostnames)}] ✗ {hostname} — {e}")
+
     print(f"\n{'='*40}")
-    print(f"Resultado: {ok} OK | {fail} falhas | {len(HOSTNAMES)} total")
+    print(f"Resultado: {ok} OK | {fail} falhas | {len(HOSTNAMES) + len(legacy_hostnames)} total")
+    print(f"\nNota: Hosts OLD-* foram criados com last_seen antigo.")
+    print(f"      Eles serão automaticamente marcados como legados ao acessar /api/hosts/legacy.")
     print(f"\nAcesse: {API_URL.replace(':8091', ':8090')}/dashboard.html")
 
 
