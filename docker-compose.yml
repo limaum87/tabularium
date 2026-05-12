@@ -1,0 +1,71 @@
+version: "3.8"
+
+services:
+  # ---- MySQL ----
+  mysql:
+    image: mysql:8.0
+    container_name: tabularium-mysql
+    restart: unless-stopped
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - tabularium-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- FastAPI Backend ----
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tabularium-backend
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      API_SECRET_KEY: ${API_SECRET_KEY}
+      API_DEBUG: ${API_DEBUG}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM}
+      JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      COLLECTOR_API_TOKEN: ${COLLECTOR_API_TOKEN}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - tabularium-net
+
+  # ---- Frontend ----
+  frontend:
+    image: nginx:alpine
+    container_name: tabularium-frontend
+    restart: unless-stopped
+    ports:
+      - "8019:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - tabularium-net
+
+volumes:
+  mysql_data:
+
+networks:
+  tabularium-net:
+    driver: bridge
