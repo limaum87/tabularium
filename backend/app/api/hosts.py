@@ -193,6 +193,50 @@ def restore_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_curr
     return {"detail": f"Host {host.hostname} restaurado para ativo"}
 
 
+@router.post("/ping-sweep")
+def ping_sweep(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Força ping em todos os hosts ativos e retorna resultado."""
+    import subprocess
+
+    active_hosts = db.query(Host).filter(Host.is_legacy == False).all()
+    if not active_hosts:
+        return {"detail": "Nenhum host ativo", "results": []}
+
+    now = datetime.utcnow()
+    results = []
+    online = 0
+    offline = 0
+
+    for host in active_hosts:
+        try:
+            result = subprocess.run(
+                ["ping", "-c", "1", "-W", "2", host.hostname],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                host.ping_status = "online"
+                online += 1
+                results.append({"hostname": host.hostname, "ping_status": "online"})
+            else:
+                host.ping_status = "offline"
+                offline += 1
+                results.append({"hostname": host.hostname, "ping_status": "offline"})
+        except Exception:
+            host.ping_status = "offline"
+            offline += 1
+            results.append({"hostname": host.hostname, "ping_status": "offline"})
+        host.last_ping = now
+
+    db.commit()
+    return {
+        "detail": f"Ping sweep concluído: {online} online, {offline} offline",
+        "total": len(active_hosts),
+        "online": online,
+        "offline": offline,
+        "results": results,
+    }
+
+
 @router.delete("/{host_id}")
 def delete_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Exclui permanentemente um host e todos os dados associados."""

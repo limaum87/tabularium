@@ -228,6 +228,7 @@
                         <p class="page-subtitle">Máquinas inventariadas no domínio</p>
                     </div>
                     <button class="btn-primary-accent" onclick="openDiscovery()" style="padding:10px 20px;font-size:13px;">⟳ Descobrir Máquinas</button>
+                    <button class="btn-primary-accent" onclick="pingSweep()" id="btn-sweep" style="padding:10px 20px;font-size:13px;margin-left:8px;">📡 Ping Sweep</button>
                 </div>
             </div>
             <div class="page-body">
@@ -244,7 +245,8 @@
                                 <tr>
                                     <th>Hostname</th>
                                     <th>Domínio</th>
-                                    <th>Status</th>
+                                    <th>Ping</th>
+                                    <th>WinRM</th>
                                     <th>Último Contato</th>
                                     <th></th>
                                     <th></th>
@@ -270,12 +272,15 @@
                     return;
                 }
                 list.forEach(h => {
-                    const badgeClass = h.status === 'online' ? 'badge-success' : h.status === 'offline' ? 'badge-danger' : 'badge-muted';
+                    const statusBadge = h.status === 'online' ? 'badge-success' : h.status === 'offline' ? 'badge-danger' : 'badge-muted';
+                    const pingBadge = h.ping_status === 'online' ? 'badge-success' : h.ping_status === 'offline' ? 'badge-danger' : 'badge-muted';
                     const dt = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
+                    const pingDt = h.last_ping ? new Date(h.last_ping).toLocaleString('pt-BR') : '—';
                     tbody.innerHTML += `<tr id="row-${h.id}">
                         <td class="mono">${h.hostname}</td>
                         <td>${h.domain || '—'}</td>
-                        <td><span class="badge-status ${badgeClass}">${h.status}</span></td>
+                        <td><span class="badge-status ${pingBadge}" title="Ping: ${pingDt}">📡 ${h.ping_status || '?'}</span></td>
+                        <td><span class="badge-status ${statusBadge}" title="WinRM">🔌 ${h.status}</span></td>
                         <td>${dt}</td>
                         <td style="text-align:right"><a href="/host-detail.html?id=${h.id}" style="font-size:12px;font-family:var(--font-mono);color:var(--accent);">Ver detalhes →</a></td>
                         <td>
@@ -289,7 +294,7 @@
                             </div>
                         </td>
                     </tr>
-                    <tr id="action-result-row-${h.id}" style="display:none;"><td colspan="6" id="action-result-${h.id}"></td></tr>`;
+                    <tr id="action-result-row-${h.id}" style="display:none;"><td colspan="7" id="action-result-${h.id}"></td></tr>`;
                 });
             }
 
@@ -456,6 +461,30 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Importar Selecionados';
+            }
+        }
+
+        async function pingSweep() {
+            const btn = document.getElementById('btn-sweep');
+            btn.disabled = true;
+            btn.textContent = 'Pinging...';
+
+            try {
+                const res = await apiFetch('/api/hosts/ping-sweep', { method: 'POST' });
+                if (res && res.ok) {
+                    const data = await res.json();
+                    loadHosts(); // Recarrega a tabela
+                    const header = document.querySelector('.page-subtitle');
+                    if (header) {
+                        const origText = header.textContent;
+                        header.textContent = data.detail;
+                        header.style.color = 'var(--success)';
+                        setTimeout(() => { header.textContent = origText; header.style.color = ''; }, 5000);
+                    }
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '📡 Ping Sweep';
             }
         }
 

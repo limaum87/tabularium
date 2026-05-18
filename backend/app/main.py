@@ -2,20 +2,89 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 import os
+import asyncio
+import subprocess
 
-from app.core.database import engine, Base, SessionLocal, User
+from app.core.database import engine, Base, SessionLocal, User, Host
 from app.core.config import settings
 from app.core.security import hash_password
 from app.api import auth, users, hosts, reports, settings as settings_api, discovery
 
+# ---- Background Ping Task ----
+
+PING_INTERVAL = 300  # 5 minutos
+_ping_task = None
+
+
+async def _ping_loop():
+    """Background task: faz ping em todos os hosts a cada 5 minutos."""
+    while True:
+        try:
+            await asyncio.sleep(PING_INTERVAL)
+            _run_ping_sweep()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[ping-sweep] Erro: {e}")
+
+
+def _run_ping_sweep():
+    """Pinga todos os hosts ativos e atualiza ping_status."""
+    from datetime import datetime
+    db = SessionLocal()
+    try:
+        active_hosts = db.query(Host).filter(Host.is_legacy == False).all()
+        if not active_hosts:
+            return
+
+        now = datetime.utcnow()
+        online_count = 0
+        offline_count = 0
+
+        for host in active_hosts:
+            try:
+                result = subprocess.run(
+                    ["ping", "-c", "1", "-W", "2", host.hostname],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    host.ping_status = "online"
+                    online_count += 1
+                else:
+                    host.ping_status = "offline"
+                    offline_count += 1
+            except Exception:
+                host.ping_status = "offline"
+                offline_count += 1
+            host.last_ping = now
+
+        db.commit()
+        print(f"[ping-sweep] {len(active_hosts)} hosts verificados — online: {online_count} | offline: {offline_count}")
+    except Exception as e:
+        print(f"[ping-sweep] Erro geral: {e}")
+    finally:
+        db.close()
+
+
+# ---- Lifespan ----
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Cria tabelas, faz seed do admin e aplica DNS na primeira execução."""
+    """Cria tabelas, faz seed do admin, aplica DNS e inicia ping sweep."""
     Base.metadata.create_all(bind=engine)
     _seed_admin()
     _apply_dns_from_db()
+
+    # Inicia background ping task
+    global _ping_task
+    _ping_task = asyncio.create_task(_ping_loop())
+    print(f"[ping-sweep] Iniciado — intervalo: {PING_INTERVAL}s")
+
     yield
+
+    # Cancela task ao desligar
+    if _ping_task:
+        _ping_task.cancel()
 
 
 def _seed_admin():
@@ -93,7 +162,7 @@ def _apply_dns_from_db():
 app = FastAPI(
     title="Tabularium",
     description="Inventário de máquinas Windows em domínio",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
     redirect_slashes=False,
 )

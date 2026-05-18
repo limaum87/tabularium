@@ -90,7 +90,7 @@
                     <a href="/hosts.html" style="color:var(--text-muted);font-size:20px;">←</a>
                     <div>
                         <h1>${h.hostname}</h1>
-                        <p class="page-subtitle">${h.domain || 'Sem domínio'} · <span class="badge-status ${badgeClass}">${h.status}</span> · Último contato: ${dt}</p>
+                        <p class="page-subtitle">${h.domain || 'Sem domínio'} · 📡 Ping: <span class="badge-status ${h.ping_status === 'online' ? 'badge-success' : h.ping_status === 'offline' ? 'badge-danger' : 'badge-muted'}">${h.ping_status || '?'}</span> · 🔌 WinRM: <span class="badge-status ${badgeClass}">${h.status}</span> · Último contato: ${dt}</p>
                     </div>
                 </div>
                 <div class="actions-bar">
