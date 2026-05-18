@@ -72,6 +72,7 @@ def _run_ping_sweep():
 async def lifespan(app: FastAPI):
     """Cria tabelas, faz seed do admin, aplica DNS e inicia ping sweep."""
     Base.metadata.create_all(bind=engine)
+    _migrate_db()
     _seed_admin()
     _apply_dns_from_db()
 
@@ -85,6 +86,35 @@ async def lifespan(app: FastAPI):
     # Cancela task ao desligar
     if _ping_task:
         _ping_task.cancel()
+
+
+def _migrate_db():
+    """Aplica migrations pendentes (ALTER TABLE para novas colunas)."""
+    import sqlalchemy
+
+    conn = engine.connect()
+    try:
+        # Migration 1: adicionar ping_status e last_ping na tabela hosts
+        inspector = sqlalchemy.inspect(engine)
+        columns = [col['name'] for col in inspector.get_columns('hosts')]
+
+        if 'ping_status' not in columns:
+            conn.execute(sqlalchemy.text(
+                "ALTER TABLE hosts ADD COLUMN ping_status ENUM('online','offline','unknown') DEFAULT 'unknown'"
+            ))
+            print("[migration] Adicionado ping_status na tabela hosts")
+
+        if 'last_ping' not in columns:
+            conn.execute(sqlalchemy.text(
+                "ALTER TABLE hosts ADD COLUMN last_ping DATETIME DEFAULT NULL"
+            ))
+            print("[migration] Adicionado last_ping na tabela hosts")
+
+        conn.commit()
+    except Exception as e:
+        print(f"[migration] Erro: {e}")
+    finally:
+        conn.close()
 
 
 def _seed_admin():
