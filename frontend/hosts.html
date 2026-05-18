@@ -108,6 +108,69 @@
             font-weight: 600;
             font-family: var(--font-mono);
         }
+        /* Action menu */
+        .action-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .action-btn {
+            background: none; border: 1px solid var(--border-subtle);
+            color: var(--text-muted); font-size: 16px;
+            cursor: pointer; padding: 4px 10px; border-radius: var(--radius-sm);
+        }
+        .action-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .action-menu {
+            display: none;
+            position: absolute;
+            right: 0; top: 100%;
+            background: var(--bg-card);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-sm);
+            min-width: 220px;
+            z-index: 500;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        .action-menu.open { display: block; }
+        .action-menu button {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 10px 16px;
+            background: none; border: none;
+            color: var(--text-primary);
+            font-size: 13px;
+            cursor: pointer;
+            font-family: var(--font-body);
+        }
+        .action-menu button:hover {
+            background: var(--accent-dim);
+            color: var(--accent);
+        }
+        .action-menu button .action-icon { margin-right: 8px; }
+        .action-menu button .action-desc {
+            display: block;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: 24px;
+        }
+        .action-result {
+            margin-top: 8px;
+            padding: 10px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-family: var(--font-mono);
+            border: 1px solid;
+        }
+        .action-result.success {
+            background: var(--success-dim);
+            border-color: rgba(52, 211, 153, 0.2);
+            color: var(--success);
+        }
+        .action-result.error {
+            background: var(--danger-dim);
+            border-color: rgba(248, 113, 113, 0.2);
+            color: var(--danger);
+        }
     </style>
 </head>
 <body>
@@ -184,6 +247,7 @@
                                     <th>Status</th>
                                     <th>Último Contato</th>
                                     <th></th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
@@ -202,19 +266,30 @@
             function renderHosts(list) {
                 tbody.innerHTML = '';
                 if (list.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted)">Nenhum host encontrado</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted)">Nenhum host encontrado</td></tr>';
                     return;
                 }
                 list.forEach(h => {
                     const badgeClass = h.status === 'online' ? 'badge-success' : h.status === 'offline' ? 'badge-danger' : 'badge-muted';
                     const dt = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
-                    tbody.innerHTML += `<tr>
+                    tbody.innerHTML += `<tr id="row-${h.id}">
                         <td class="mono">${h.hostname}</td>
                         <td>${h.domain || '—'}</td>
                         <td><span class="badge-status ${badgeClass}">${h.status}</span></td>
                         <td>${dt}</td>
                         <td style="text-align:right"><a href="/host-detail.html?id=${h.id}" style="font-size:12px;font-family:var(--font-mono);color:var(--accent);">Ver detalhes →</a></td>
-                    </tr>`;
+                        <td>
+                            <div class="action-dropdown">
+                                <button class="action-btn" onclick="toggleActionMenu(${h.id})">⋮</button>
+                                <div class="action-menu" id="menu-${h.id}">
+                                    <button onclick="runAction(${h.id}, 'ping', '${h.hostname}')"><span class="action-icon">📡</span>Testar Ping<span class="action-desc">Verifica se a máquina responde</span></button>
+                                    <button onclick="runAction(${h.id}, 'test-winrm', '${h.hostname}')"><span class="action-icon">🔌</span>Testar WinRM<span class="action-desc">Testa conexão WinRM com a máquina</span></button>
+                                    <button onclick="runAction(${h.id}, 'enable-winrm', '${h.hostname}')"><span class="action-icon">⚡</span>Ativar WinRM<span class="action-desc">Habilita WinRM remotamente via PSExec</span></button>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr id="action-result-row-${h.id}" style="display:none;"><td colspan="6" id="action-result-${h.id}"></td></tr>`;
                 });
             }
 
@@ -382,6 +457,63 @@
                 btn.disabled = false;
                 btn.textContent = 'Importar Selecionados';
             }
+        }
+
+        // ---- Action Menu ----
+
+        let openMenuId = null;
+
+        function toggleActionMenu(hostId) {
+            if (openMenuId !== null) {
+                const prev = document.getElementById(`menu-${openMenuId}`);
+                if (prev) prev.classList.remove('open');
+            }
+            const menu = document.getElementById(`menu-${hostId}`);
+            if (openMenuId === hostId) {
+                openMenuId = null;
+                return;
+            }
+            menu.classList.add('open');
+            openMenuId = hostId;
+        }
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.action-dropdown') && openMenuId !== null) {
+                const prev = document.getElementById(`menu-${openMenuId}`);
+                if (prev) prev.classList.remove('open');
+                openMenuId = null;
+            }
+        });
+
+        async function runAction(hostId, action, hostname) {
+            const menu = document.getElementById(`menu-${hostId}`);
+            if (menu) menu.classList.remove('open');
+            openMenuId = null;
+
+            const resultRow = document.getElementById(`action-result-row-${hostId}`);
+            const resultCell = document.getElementById(`action-result-${hostId}`);
+
+            resultRow.style.display = 'table-row';
+            resultCell.innerHTML = `<div class="action-result" style="background:rgba(255,255,255,0.03);border-color:var(--border-subtle);color:var(--text-muted);">⏳ Executando ${action} em ${hostname}...</div>`;
+
+            try {
+                const res = await apiFetch(`/api/hosts/${hostId}/action/${action}`, { method: 'POST' });
+                if (!res) {
+                    resultCell.innerHTML = `<div class="action-result error">✗ Erro de conexão com a API</div>`;
+                    return;
+                }
+                const data = await res.json();
+
+                if (data.success) {
+                    resultCell.innerHTML = `<div class="action-result success">✓ ${data.message}</div>`;
+                } else {
+                    resultCell.innerHTML = `<div class="action-result error">✗ ${data.message}</div>`;
+                }
+            } catch (err) {
+                resultCell.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;
+            }
+
+            setTimeout(() => { resultRow.style.display = 'none'; }, 15000);
         }
 
         loadHosts();

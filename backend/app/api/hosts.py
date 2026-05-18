@@ -212,6 +212,178 @@ def delete_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_curre
     return {"detail": f"Host {hostname} excluído permanentemente"}
 
 
+# ---- Ações nos Hosts ----
+
+@router.post("/{host_id}/action/ping")
+def action_ping(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Testa conectividade ping com o host."""
+    import subprocess
+    import re
+
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "3", "-W", "3", host.hostname],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            avg_match = re.search(r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", result.stdout)
+            avg_ms = float(avg_match.group(1)) if avg_match else None
+            return {
+                "success": True,
+                "message": f"{host.hostname} respondeu ao ping" + (f" ({avg_ms:.0f}ms)" if avg_ms else ""),
+                "hostname": host.hostname,
+                "avg_ms": avg_ms,
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"{host.hostname} não respondeu ao ping",
+                "hostname": host.hostname,
+            }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": f"Timeout ao pingar {host.hostname}", "hostname": host.hostname}
+    except Exception as e:
+        return {"success": False, "message": f"Erro: {str(e)[:200]}", "hostname": host.hostname}
+
+
+@router.post("/{host_id}/action/test-winrm")
+def action_test_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Testa conexão WinRM com o host usando credenciais das settings."""
+    try:
+        import winrm
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Biblioteca pywinrm não instalada")
+
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+
+    from app.core.database import Setting
+    winrm_user = db.query(Setting).filter(Setting.key == "username", Setting.category == "winrm").first()
+    winrm_pass = db.query(Setting).filter(Setting.key == "password", Setting.category == "winrm").first()
+    winrm_scheme = db.query(Setting).filter(Setting.key == "scheme", Setting.category == "winrm").first()
+    winrm_port = db.query(Setting).filter(Setting.key == "port", Setting.category == "winrm").first()
+
+    if not winrm_user or not winrm_pass:
+        return {"success": False, "message": "Credenciais WinRM não configuradas. Vá em Configurações.", "hostname": host.hostname}
+
+    scheme = winrm_scheme.value if winrm_scheme else "http"
+    port = int(winrm_port.value) if winrm_port else 5985
+
+    try:
+        endpoint = f"{scheme}://{host.hostname}:{port}"
+        session = winrm.Session(
+            endpoint,
+            auth=(winrm_user.value, winrm_pass.value),
+            transport="ntlm",
+            server_cert_validation="ignore",
+        )
+        result = session.run_ps("Write-Output 'OK'")
+        stdout = result.std_out.decode("utf-8", errors="replace").strip()
+        return {
+            "success": True,
+            "message": f"WinRM OK — resposta: {stdout}",
+            "hostname": host.hostname,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Falha WinRM: {str(e)[:200]}",
+            "hostname": host.hostname,
+        }
+
+
+@router.post("/{host_id}/action/enable-winrm")
+def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Tenta ativar WinRM remotamente via impacket-psexec.
+
+    Executa remotamente:
+      1. Enable-PSRemoting -Force
+      2. Configura TrustedHosts = *
+      3. Habilita autenticação Basic e NTLM
+      4. Permite tráfego não criptografado
+    """
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+
+    from app.core.database import Setting
+    winrm_user = db.query(Setting).filter(Setting.key == "username", Setting.category == "winrm").first()
+    winrm_pass = db.query(Setting).filter(Setting.key == "password", Setting.category == "winrm").first()
+
+    if not winrm_user or not winrm_pass:
+        return {"success": False, "message": "Credenciais WinRM não configuradas", "hostname": host.hostname}
+
+    try:
+        from impacket.smbconnection import SMBConnection  # noqa: F401
+    except ImportError:
+        raise HTTPException(status_code=500, detail="impacket não instalado. Adicione ao requirements.txt do backend.")
+
+    import subprocess
+    import sys
+
+    # Parse domínio/usuário
+    raw_user = winrm_user.value
+    password = winrm_pass.value
+    domain = ""
+    user = raw_user
+    if "\\\\" in user:
+        parts = user.split("\\\\", 1)
+        domain = parts[0]
+        user = parts[1]
+    elif "@" in user:
+        parts = user.split("@", 1)
+        user = parts[0]
+        domain = parts[1]
+
+    # Script PowerShell para habilitar WinRM
+    ps_script = (
+        "Enable-PSRemoting -Force; "
+        "Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '*' -Force; "
+        "Set-Item WSMan:\\localhost\\Service\\Auth\\Basic -Value $true -Force; "
+        "Set-Item WSMan:\\localhost\\Service\\Auth\\Negotiate -Value $true -Force; "
+        "winrm set winrm/config/service '@{AllowUnencrypted=\"true\"}'"
+    )
+
+    # Monta credencial no formato impacket: domain/user:password@host
+    if domain:
+        creds = f"{domain}/{user}:{password}@{host.hostname}"
+    else:
+        creds = f"{user}:{password}@{host.hostname}"
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "impacket.examples.psexec", creds, ps_script],
+            capture_output=True, text=True, timeout=90
+        )
+
+        output = (result.stdout or "") + (result.stderr or "")
+
+        if result.returncode == 0 or "completed successfully" in output.lower() or "[+]" in output:
+            return {
+                "success": True,
+                "message": f"WinRM ativado remotamente em {host.hostname}. Use 'Testar WinRM' para confirmar.",
+                "hostname": host.hostname,
+            }
+        else:
+            # Tenta extrair erro útil do output
+            err_lines = output.strip().split("\n")[-5:]
+            err = " | ".join(line.strip() for line in err_lines if line.strip())
+            return {
+                "success": False,
+                "message": f"Falha ao ativar WinRM: {err[:300]}",
+                "hostname": host.hostname,
+            }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": f"Timeout (90s) ao ativar WinRM em {host.hostname}", "hostname": host.hostname}
+    except Exception as e:
+        return {"success": False, "message": f"Erro: {str(e)[:200]}", "hostname": host.hostname}
+
+
 @router.get("/{host_id}")
 def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     host = db.query(Host).filter(Host.id == host_id).first()

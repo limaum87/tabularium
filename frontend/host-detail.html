@@ -5,6 +5,56 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tabularium — Detalhe do Host</title>
     <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .action-result {
+            margin-top: 8px;
+            padding: 10px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-family: var(--font-mono);
+            border: 1px solid;
+        }
+        .action-result.success {
+            background: var(--success-dim);
+            border-color: rgba(52, 211, 153, 0.2);
+            color: var(--success);
+        }
+        .action-result.error {
+            background: var(--danger-dim);
+            border-color: rgba(248, 113, 113, 0.2);
+            color: var(--danger);
+        }
+        .action-result.loading {
+            background: rgba(255,255,255,0.03);
+            border-color: var(--border-subtle);
+            color: var(--text-muted);
+        }
+        .actions-bar {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .action-btn-detail {
+            background: none;
+            border: 1px solid var(--border-medium);
+            color: var(--text-primary);
+            font-size: 12px;
+            font-family: var(--font-body);
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .action-btn-detail:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: var(--accent-dim);
+        }
+        .action-btn-detail:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
 </head>
 <body>
     <div id="app"></div>
@@ -43,6 +93,12 @@
                         <p class="page-subtitle">${h.domain || 'Sem domínio'} · <span class="badge-status ${badgeClass}">${h.status}</span> · Último contato: ${dt}</p>
                     </div>
                 </div>
+                <div class="actions-bar">
+                    <button class="action-btn-detail" onclick="runDetailAction('ping')" id="btn-ping">📡 Testar Ping</button>
+                    <button class="action-btn-detail" onclick="runDetailAction('test-winrm')" id="btn-test-winrm">🔌 Testar WinRM</button>
+                    <button class="action-btn-detail" onclick="runDetailAction('enable-winrm')" id="btn-enable-winrm">⚡ Ativar WinRM</button>
+                </div>
+                <div id="action-result" style="display:none;"></div>
             </div>
             <div class="page-body">
                 <!-- Hardware -->
@@ -156,6 +212,44 @@
         }
 
         loadHost();
+
+        async function runDetailAction(action) {
+            const btn = document.getElementById(`btn-${action.replace('-', '-')}`);
+            const btnMap = { 'ping': 'btn-ping', 'test-winrm': 'btn-test-winrm', 'enable-winrm': 'btn-enable-winrm' };
+            const actionBtn = document.getElementById(btnMap[action]);
+            const resultEl = document.getElementById('action-result');
+
+            if (actionBtn) {
+                actionBtn.disabled = true;
+                actionBtn.style.opacity = '0.5';
+            }
+
+            resultEl.style.display = 'block';
+            resultEl.innerHTML = '<div class="action-result loading">⏳ Executando...</div>';
+
+            try {
+                const res = await apiFetch(`/api/hosts/${hostId}/action/${action}`, { method: 'POST' });
+                if (!res) {
+                    resultEl.innerHTML = '<div class="action-result error">✗ Erro de conexão com a API</div>';
+                    return;
+                }
+                const data = await res.json();
+                if (data.success) {
+                    resultEl.innerHTML = `<div class="action-result success">✓ ${data.message}</div>`;
+                } else {
+                    resultEl.innerHTML = `<div class="action-result error">✗ ${data.message}</div>`;
+                }
+            } catch (err) {
+                resultEl.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;
+            }
+
+            if (actionBtn) {
+                actionBtn.disabled = false;
+                actionBtn.style.opacity = '1';
+            }
+
+            setTimeout(() => { resultEl.style.display = 'none'; }, 20000);
+        }
     </script>
 </body>
 </html>
