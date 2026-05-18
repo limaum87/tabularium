@@ -171,6 +171,46 @@
             border-color: rgba(248, 113, 113, 0.2);
             color: var(--danger);
         }
+        /* Toggle switch */
+        .toggle-filter {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+        .toggle-filter input { display: none; }
+        .toggle-slider {
+            position: relative;
+            width: 36px;
+            height: 20px;
+            background: rgba(255,255,255,0.08);
+            border-radius: 10px;
+            transition: background 0.25s;
+        }
+        .toggle-slider::after {
+            content: '';
+            position: absolute;
+            top: 3px; left: 3px;
+            width: 14px; height: 14px;
+            background: var(--text-muted);
+            border-radius: 50%;
+            transition: all 0.25s var(--ease-out);
+        }
+        .toggle-filter input:checked + .toggle-slider {
+            background: var(--success-dim);
+        }
+        .toggle-filter input:checked + .toggle-slider::after {
+            transform: translateX(16px);
+            background: var(--success);
+        }
+        .toggle-filter input:checked ~ .toggle-label {
+            color: var(--success);
+        }
     </style>
 </head>
 <body>
@@ -237,6 +277,11 @@
                         <span class="panel-title">Lista de Hosts</span>
                         <div style="display:flex;gap:8px;align-items:center;">
                             <input type="text" class="form-control-dark" id="search-hosts" placeholder="Buscar hostname..." style="width:240px;padding:8px 14px;font-size:12px;">
+                            <label class="toggle-filter" id="toggle-online-wrap">
+                                <input type="checkbox" id="toggle-online" onchange="applyFilters()">
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-label">Online</span>
+                            </label>
                         </div>
                     </div>
                     <div class="panel-body">
@@ -300,14 +345,18 @@
 
             renderHosts(hosts);
 
-            document.getElementById('search-hosts').addEventListener('input', (e) => {
-                const q = e.target.value.toLowerCase();
-                const filtered = hosts.filter(h =>
-                    h.hostname.toLowerCase().includes(q) ||
-                    (h.domain && h.domain.toLowerCase().includes(q))
-                );
+            function applyFilters() {
+                const q = document.getElementById('search-hosts').value.toLowerCase();
+                const onlyOnline = document.getElementById('toggle-online').checked;
+                const filtered = hosts.filter(h => {
+                    const matchSearch = h.hostname.toLowerCase().includes(q) || (h.domain && h.domain.toLowerCase().includes(q));
+                    const matchOnline = !onlyOnline || h.status === 'online';
+                    return matchSearch && matchOnline;
+                });
                 renderHosts(filtered);
-            });
+            }
+
+            document.getElementById('search-hosts').addEventListener('input', applyFilters);
         }
 
         // ---- Discovery ----
