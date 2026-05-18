@@ -469,10 +469,40 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
             "hostname": host.hostname,
         }
 
+    # Verifica se porta SMB (445) está alcançável antes de tentar
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(5)
+        # Resolve hostname primeiro
+        target_ip = target_host
+        try:
+            target_ip = socket.gethostbyname(target_host)
+        except socket.gaierror:
+            pass
+        result_sock = sock.connect_ex((target_ip, 445))
+        sock.close()
+        if result_sock != 0:
+            return {
+                "success": False,
+                "message": f"Porta SMB (445) fechada/inacessível em {target_host} (IP: {target_ip}). O PSExec precisa de SMB para funcionar. Verifique firewall do Windows.",
+                "hostname": host.hostname,
+                "debug": [f"Credenciais: {debug_creds}", f"Target: {target_ip}:445 → fechada"],
+            }
+    except socket.timeout:
+        return {
+            "success": False,
+            "message": f"Timeout ao testar porta SMB (445) em {target_host}. Host pode estar offline ou firewall bloqueando.",
+            "hostname": host.hostname,
+            "debug": [f"Credenciais: {debug_creds}"],
+        }
+    except Exception as e:
+        pass  # Continua mesmo sem conseguir testar a porta
+
     try:
         result = subprocess.run(
             psexec_cmd,
-            capture_output=True, text=True, timeout=90
+            capture_output=True, text=True, timeout=30
         )
 
         output = (result.stdout or "") + (result.stderr or "")
@@ -502,7 +532,7 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
                 "debug": debug,
             }
     except subprocess.TimeoutExpired:
-        return {"success": False, "message": f"Timeout (90s) ao ativar WinRM em {host.hostname}", "hostname": host.hostname}
+        return {"success": False, "message": f"Timeout (30s) ao ativar WinRM em {host.hostname}. Possível firewall bloqueando SMB (porta 445).", "hostname": host.hostname}
     except Exception as e:
         return {"success": False, "message": f"Erro: {str(e)[:200]}", "hostname": host.hostname}
 
