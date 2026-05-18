@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -237,155 +238,184 @@ def ping_sweep(db: Session = Depends(get_db), _=Depends(get_current_user)):
     }
 
 
-@router.post("/{host_id}/action/collect")
-def action_collect(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """Coleta manual de dados via WinRM e atualiza o banco."""
-    try:
-        import winrm  # noqa: F401
-    except ImportError:
-        raise HTTPException(status_code=500, detail="Biblioteca pywinrm não instalada")
+@router.get("/{host_id}/action/collect-stream")
+def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Coleta manual via SSE — roda cada step individualmente e envia progresso."""
+    import json as json_mod
+    import winrm
+    from app.collector.winrm_collect import _get_settings, _make_fqdn, _connect, _run_ps, _safe_json
+    from app.collector.winrm_collect import (
+        _ps_hardware, _ps_disks, _ps_network,
+        _ps_windows_license, _ps_office_license, _ps_software,
+    )
 
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host não encontrado")
 
-    from app.collector.winrm_collect import collect_host, _get_settings
-
     cfg = _get_settings(db)
     if not cfg:
-        return {"success": False, "message": "Credenciais WinRM não configuradas. Vá em Configurações.", "hostname": host.hostname}
-
-    try:
-        data = collect_host(host.hostname, cfg)
-    except Exception as e:
-        return {"success": False, "message": f"Falha na conexão WinRM: {str(e)[:200]}", "hostname": host.hostname, "debug": ["Não foi possível conectar ao host."]}
-
-    # Salva no banco (mesma lógica do checkin)
-    now = datetime.utcnow()
-    host.status = "online"
-    host.last_seen = now
-    host.updated_at = now
-    if host.is_legacy:
-        host.is_legacy = False
-        host.legacy_since = None
+        raise HTTPException(status_code=400, detail="Credenciais WinRM não configuradas")
 
     host_id_val = host.id
 
-    # Hardware
-    hw = data.get("hardware")
-    if hw:
-        existing = db.query(HostHardware).filter(HostHardware.host_id == host_id_val).first()
-        hw_data = {
-            "manufacturer": hw.get("manufacturer"),
-            "model": hw.get("model"),
-            "serial": hw.get("serial"),
-            "cpu": hw.get("cpu"),
-            "ram_gb": hw.get("ram_gb"),
-            "bios_version": hw.get("bios_version"),
-            "last_boot": hw.get("last_boot"),
-            "updated_at": now,
-        }
-        if existing:
-            for k, v in hw_data.items():
-                setattr(existing, k, v)
-        else:
-            db.add(HostHardware(host_id=host_id_val, **hw_data))
+    def sse(data):
+        return f"data: {json_mod.dumps(data, ensure_ascii=False)}\n\n"
 
-    # Discos
-    disks = data.get("disks")
-    if disks is not None:
-        db.query(HostDisk).filter(HostDisk.host_id == host_id_val).delete()
-        for d in disks:
-            db.add(HostDisk(
-                host_id=host_id_val,
-                drive=d.get("drive"),
-                total_gb=d.get("total_gb"),
-                free_gb=d.get("free_gb"),
-                filesystem=d.get("filesystem"),
-                updated_at=now,
-            ))
+    def event_stream():
+        yield sse({"type": "start", "hostname": host.hostname})
 
-    # Rede
-    network = data.get("network")
-    if network is not None:
-        db.query(HostNetwork).filter(HostNetwork.host_id == host_id_val).delete()
-        for n in network:
-            db.add(HostNetwork(
-                host_id=host_id_val,
-                ip=n.get("ip"),
-                mac=n.get("mac"),
-                gateway=n.get("gateway"),
-                dns=n.get("dns"),
-                adapter_name=n.get("adapter_name"),
-                updated_at=now,
-            ))
+        # Conecta WinRM
+        try:
+            target = _make_fqdn(host.hostname, cfg.get("search", ""))
+            yield sse({"type": "step", "step": "connect", "message": f"Conectando em {target}..."})
+            session = _connect(target, cfg)
+            # Teste rápido
+            result = session.run_ps("Write-Output 'OK'")
+            if result.status_code != 0:
+                raise RuntimeError("WinRM não respondeu ao teste")
+            yield sse({"type": "step_ok", "step": "connect", "message": f"Conectado em {target}"})
+        except Exception as e:
+            yield sse({"type": "error", "step": "connect", "message": f"Falha na conexão: {str(e)[:200]}"})
+            yield sse({"type": "done", "success": False, "message": "Falha na conexão"})
+            return
 
-    # Licenças
-    licenses = data.get("licenses")
-    if licenses is not None:
-        db.query(HostLicense).filter(HostLicense.host_id == host_id_val).delete()
-        for lic in licenses:
-            db.add(HostLicense(
-                host_id=host_id_val,
-                product=lic.get("product", "windows"),
-                edition=lic.get("edition"),
-                version=lic.get("version"),
-                channel=lic.get("channel"),
-                license_status=lic.get("license_status"),
-                partial_product_key=lic.get("partial_product_key"),
-                oem_key_found=lic.get("oem_key_found"),
-                detection_method=lic.get("detection_method"),
-                updated_at=now,
-            ))
+        # Atualiza status
+        host_obj = db.query(Host).filter(Host.id == host_id_val).first()
+        host_obj.status = "online"
+        host_obj.last_seen = datetime.utcnow()
+        host_obj.updated_at = datetime.utcnow()
+        if host_obj.is_legacy:
+            host_obj.is_legacy = False
+            host_obj.legacy_since = None
+        db.commit()
 
-    # Software
-    software = data.get("software")
-    if software is not None:
-        db.query(HostSoftware).filter(HostSoftware.host_id == host_id_val).delete()
-        for sw in software:
-            db.add(HostSoftware(
-                host_id=host_id_val,
-                name=sw.get("name"),
-                version=sw.get("version"),
-                publisher=sw.get("publisher"),
-                install_date=sw.get("install_date"),
-                install_location=sw.get("install_location"),
-                updated_at=now,
-            ))
+        now = datetime.utcnow()
+        total_success = 0
+        total_fail = 0
 
-    # Scan history
-    db.add(ScanHistory(
-        host_id=host_id_val,
-        hostname=host.hostname,
-        status="success",
-        started_at=now,
-        finished_at=now,
-    ))
+        # ---- HARDWARE ----
+        yield sse({"type": "step", "step": "hardware", "message": "📡 Coletando hardware..."})
+        try:
+            raw = _run_ps(session, _ps_hardware())
+            hw = _safe_json(raw, "hardware")
+            if hw:
+                existing = db.query(HostHardware).filter(HostHardware.host_id == host_id_val).first()
+                hw_data = {
+                    "manufacturer": hw.get("manufacturer"),
+                    "model": hw.get("model"),
+                    "serial": hw.get("serial"),
+                    "cpu": hw.get("cpu"),
+                    "ram_gb": hw.get("ram_gb"),
+                    "bios_version": hw.get("bios_version"),
+                    "last_boot": hw.get("last_boot"),
+                    "updated_at": now,
+                }
+                if existing:
+                    for k, v in hw_data.items():
+                        setattr(existing, k, v)
+                else:
+                    db.add(HostHardware(host_id=host_id_val, **hw_data))
+                db.commit()
+                cpu = hw.get("cpu", "?")[:40]
+                ram = hw.get("ram_gb", "?")
+                yield sse({"type": "step_ok", "step": "hardware", "message": f"✓ CPU: {cpu} | RAM: {ram} GB"})
+                total_success += 1
+            else:
+                yield sse({"type": "step_warn", "step": "hardware", "message": "⚠ Hardware retornou vazio"})
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "hardware", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
 
-    db.commit()
+        # ---- DISCOS ----
+        yield sse({"type": "step", "step": "disks", "message": "💾 Coletando discos..."})
+        try:
+            raw = _run_ps(session, _ps_disks())
+            parsed = _safe_json(raw, "disks")
+            disks = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+            db.query(HostDisk).filter(HostDisk.host_id == host_id_val).delete()
+            for d in disks:
+                db.add(HostDisk(host_id=host_id_val, drive=d.get("drive"), total_gb=d.get("total_gb"), free_gb=d.get("free_gb"), filesystem=d.get("filesystem"), updated_at=now))
+            db.commit()
+            drives = ", ".join(d.get("drive", "?") for d in disks)
+            yield sse({"type": "step_ok", "step": "disks", "message": f"✓ {len(disks)} disco(s): {drives}"})
+            total_success += 1
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "disks", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
 
-    collected = []
-    if hw:
-        collected.append("hardware")
-    if disks:
-        collected.append(f"{len(disks)} discos")
-    if network:
-        collected.append(f"{len(network)} redes")
-    if licenses:
-        collected.append(f"{len(licenses)} licenças")
-    if software:
-        collected.append(f"{len(software)} softwares")
+        # ---- REDE ----
+        yield sse({"type": "step", "step": "network", "message": "🌐 Coletando rede..."})
+        try:
+            raw = _run_ps(session, _ps_network())
+            parsed = _safe_json(raw, "network")
+            network = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+            db.query(HostNetwork).filter(HostNetwork.host_id == host_id_val).delete()
+            for n in network:
+                db.add(HostNetwork(host_id=host_id_val, ip=n.get("ip"), mac=n.get("mac"), gateway=n.get("gateway"), dns=n.get("dns"), adapter_name=n.get("adapter_name"), updated_at=now))
+            db.commit()
+            ips = ", ".join(n.get("ip", "?") for n in network if n.get("ip"))
+            yield sse({"type": "step_ok", "step": "network", "message": f"✓ {len(network)} adaptador(es): {ips}"})
+            total_success += 1
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "network", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
 
-    msg = f"Coleta OK — {', '.join(collected)}"
-    if data.get("errors"):
-        msg += f" | Avisos: {'; '.join(data['errors'][:3])}"
+        # ---- LICENÇAS ----
+        yield sse({"type": "step", "step": "licenses", "message": "🔑 Coletando licenças..."})
+        try:
+            licenses = []
+            for ps_func, label in [(_ps_windows_license, "windows"), (_ps_office_license, "office")]:
+                try:
+                    raw = _run_ps(session, ps_func())
+                    parsed = _safe_json(raw, f"license-{label}")
+                    if parsed:
+                        if isinstance(parsed, list):
+                            licenses.extend(parsed)
+                        else:
+                            licenses.append(parsed)
+                except Exception:
+                    pass
+            db.query(HostLicense).filter(HostLicense.host_id == host_id_val).delete()
+            for lic in licenses:
+                db.add(HostLicense(host_id=host_id_val, product=lic.get("product", "windows"), edition=lic.get("edition"), version=lic.get("version"), channel=lic.get("channel"), license_status=lic.get("license_status"), partial_product_key=lic.get("partial_product_key"), oem_key_found=lic.get("oem_key_found"), detection_method=lic.get("detection_method"), updated_at=now))
+            db.commit()
+            lic_summary = ", ".join(f"{l.get('product','?')}={l.get('license_status','?')}" for l in licenses)
+            yield sse({"type": "step_ok", "step": "licenses", "message": f"✓ {len(licenses)} licença(s): {lic_summary}"})
+            total_success += 1
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "licenses", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
 
-    return {
-        "success": True,
-        "message": msg,
-        "hostname": host.hostname,
-        "debug": data.get("debug", []),
-    }
+        # ---- SOFTWARE ----
+        yield sse({"type": "step", "step": "software", "message": "📦 Coletando softwares (pode demorar)..."})
+        try:
+            raw = _run_ps(session, _ps_software())
+            parsed = _safe_json(raw, "software")
+            software = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+            db.query(HostSoftware).filter(HostSoftware.host_id == host_id_val).delete()
+            for sw in software:
+                db.add(HostSoftware(host_id=host_id_val, name=sw.get("name"), version=sw.get("version"), publisher=sw.get("publisher"), install_date=sw.get("install_date"), install_location=sw.get("install_location"), updated_at=now))
+            db.commit()
+            yield sse({"type": "step_ok", "step": "software", "message": f"✓ {len(software)} software(s) instalados"})
+            total_success += 1
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "software", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
+
+        # ---- DONE ----
+        # Scan history
+        db.add(ScanHistory(host_id=host_id_val, hostname=host.hostname, status="success", started_at=now, finished_at=datetime.utcnow()))
+        db.commit()
+
+        yield sse({
+            "type": "done",
+            "success": total_fail == 0,
+            "message": f"Coleta concluída: {total_success} OK, {total_fail} falha(s)",
+            "stats": {"success": total_success, "fail": total_fail},
+        })
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.delete("/{host_id}")

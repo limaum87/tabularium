@@ -65,6 +65,42 @@
             vertical-align: middle;
             margin-right: 6px;
         }
+        /* Console */
+        .collect-console {
+            margin-top: 16px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: var(--radius-sm);
+            font-family: var(--font-mono, 'Courier New', monospace);
+            font-size: 12px;
+            color: #c9d1d9;
+            overflow: hidden;
+        }
+        .console-header {
+            background: #161b22;
+            padding: 8px 14px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: #8b949e;
+        }
+        .console-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .console-body {
+            padding: 12px 14px;
+            max-height: 320px;
+            overflow-y: auto;
+            line-height: 1.7;
+        }
+        .console-line { white-space: pre-wrap; word-break: break-all; }
+        .console-line.step { color: #58a6ff; }
+        .console-line.ok { color: #3fb950; }
+        .console-line.warn { color: #d29922; }
+        .console-line.fail { color: #f85149; }
+        .console-line.error { color: #f85149; font-weight: bold; }
+        .console-line.done { color: #3fb950; font-weight: bold; padding-top: 8px; border-top: 1px solid #30363d; }
+        .console-line .timestamp { color: #484f58; margin-right: 8px; }
     </style>
 </head>
 <body>
@@ -237,33 +273,22 @@
             }
 
             const isCollect = action === 'collect';
-            const loadingMsg = isCollect
-                ? '<span class="spinner"></span> Coletando dados do host... Isso pode levar até 2 minutos. Aguarde.'
-                : '⏳ Executando...';
+
+            if (isCollect) {
+                // SSE: coleta com console visual
+                runCollectStream(resultEl, actionBtn, labels);
+                return;
+            }
+
             resultEl.style.display = 'block';
-            resultEl.innerHTML = `<div class="action-result loading">${loadingMsg}</div>`;
+            resultEl.innerHTML = '<div class="action-result loading">⏳ Executando...</div>';
 
             try {
-                const controller = new AbortController();
-                const timeout = isCollect ? 180000 : 60000;
-                const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-                const res = await fetch(`/api/hosts/${hostId}/action/${action}`, {
-                    method: 'POST',
-                    headers: { ...authHeaders() },
-                    signal: controller.signal,
-                });
-                clearTimeout(timeoutId);
-
-                if (!res.ok) {
-                    if (res.status === 504) {
-                        resultEl.innerHTML = '<div class="action-result error">✗ Timeout do servidor (504). A coleta demorou demais. Tente novamente — dados parciais podem ter sido salvos. Recarregue a página.</div>';
-                    } else {
-                        resultEl.innerHTML = `<div class="action-result error">✗ Erro HTTP ${res.status}</div>`;
-                    }
+                const res = await apiFetch(`/api/hosts/${hostId}/action/${action}`, { method: 'POST' });
+                if (!res) {
+                    resultEl.innerHTML = '<div class="action-result error">✗ Erro de conexão com a API</div>';
                     return;
                 }
-
                 const data = await res.json();
                 if (data.success) {
                     let debugHtml = '';
@@ -271,9 +296,6 @@
                         debugHtml = `<div style="margin-top:6px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono);background:var(--bg-dark,#1a1a2e);padding:6px 10px;border-radius:4px;">${data.debug.map(d => `<div>${d}</div>`).join('')}</div>`;
                     }
                     resultEl.innerHTML = `<div class="action-result success">✓ ${data.message}${debugHtml}</div>`;
-                    if (isCollect) {
-                        setTimeout(() => { loadHost(); resultEl.style.display = 'none'; }, 2000);
-                    }
                 } else {
                     let debugHtml = '';
                     if (data.debug && data.debug.length > 0) {
@@ -282,11 +304,7 @@
                     resultEl.innerHTML = `<div class="action-result error">✗ ${data.message}${debugHtml}</div>`;
                 }
             } catch (err) {
-                if (err.name === 'AbortError') {
-                    resultEl.innerHTML = '<div class="action-result error">✗ Timeout — a requisição demorou demais. Dados parciais podem ter sido salvos. Recarregue a página para verificar.</div>';
-                } else {
-                    resultEl.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;
-                }
+                resultEl.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;
             }
 
             if (actionBtn) {
@@ -294,7 +312,105 @@
                 actionBtn.textContent = labels[action] || action;
             }
 
-            setTimeout(() => { resultEl.style.display = 'none'; }, isCollect ? 30000 : 20000);
+            setTimeout(() => { resultEl.style.display = 'none'; }, 20000);
+        }
+
+        async function runCollectStream(resultEl, actionBtn, labels) {
+            resultEl.style.display = 'block';
+            resultEl.innerHTML = `
+                <div class="collect-console">
+                    <div class="console-header">
+                        <div class="console-dot" style="background:#f85149;"></div>
+                        <div class="console-dot" style="background:#d29922;"></div>
+                        <div class="console-dot" style="background:#3fb950;"></div>
+                        <span>Tabularium — Coleta Remota</span>
+                    </div>
+                    <div class="console-body" id="console-output"></div>
+                </div>`;
+
+            const output = document.getElementById('console-output');
+            let hasError = false;
+
+            function ts() {
+                const d = new Date();
+                return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+            }
+
+            function addLine(cls, msg) {
+                const line = document.createElement('div');
+                line.className = `console-line ${cls}`;
+                line.innerHTML = `<span class="timestamp">[${ts()}]</span>${msg}`;
+                output.appendChild(line);
+                output.scrollTop = output.scrollHeight;
+            }
+
+            try {
+                const res = await fetch(`/api/hosts/${hostId}/action/collect-stream`, {
+                    headers: { ...authHeaders() },
+                });
+
+                if (!res.ok) {
+                    addLine('error', `✗ Erro HTTP ${res.status}`);
+                    return;
+                }
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // keep incomplete line
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                switch (data.type) {
+                                    case 'start':
+                                        addLine('step', `Iniciando coleta: ${data.hostname}`);
+                                        break;
+                                    case 'step':
+                                        addLine('step', data.message);
+                                        break;
+                                    case 'step_ok':
+                                        addLine('ok', data.message);
+                                        break;
+                                    case 'step_warn':
+                                        addLine('warn', data.message);
+                                        break;
+                                    case 'step_fail':
+                                        addLine('fail', data.message);
+                                        hasError = true;
+                                        break;
+                                    case 'error':
+                                        addLine('error', data.message);
+                                        hasError = true;
+                                        break;
+                                    case 'done':
+                                        addLine('done', data.message);
+                                        // Recarrega página após 3s
+                                        setTimeout(() => { loadHost(); resultEl.style.display = 'none'; }, 3000);
+                                        break;
+                                }
+                            } catch (e) {
+                                // ignore parse errors
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                addLine('error', `✗ Erro: ${err.message}`);
+            }
+
+            if (actionBtn) {
+                actionBtn.disabled = false;
+                actionBtn.textContent = labels['collect'];
+            }
         }
     </script>
 </body>
