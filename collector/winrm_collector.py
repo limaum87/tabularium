@@ -25,7 +25,7 @@ class WinRMCollector:
         self.timeout = winrm_cfg.get("timeout", 30)
         self.verify_ssl = winrm_cfg.get("verify_ssl", False)
 
-    def _connect(self, hostname):
+    def _connect(self, hostname, operation_timeout_sec=60, read_timeout_sec=90):
         """Cria sessão WinRM com o host."""
         endpoint = f"{self.scheme}://{hostname}:{self.port}"
         session = winrm.Session(
@@ -33,6 +33,8 @@ class WinRMCollector:
             auth=(self.username, self.password),
             transport="ntlm",
             server_cert_validation="ignore" if not self.verify_ssl else "validate",
+            operation_timeout_sec=operation_timeout_sec,
+            read_timeout_sec=read_timeout_sec,
         )
         return session
 
@@ -87,11 +89,12 @@ class WinRMCollector:
             log.warning(f"  ⚠ rede: {e}")
             data["network"] = []
 
-        # Licenças
+        # Licenças — sessão com timeout maior
+        lic_session = self._connect(hostname, operation_timeout_sec=120, read_timeout_sec=180)
         licenses = []
         for ps_func, label in [(ps_windows_license, "windows"), (ps_office_license, "office")]:
             try:
-                raw = self._run_script(session, ps_func())
+                raw = self._run_script(lic_session, ps_func())
                 parsed = self._safe_json(raw, f"license-{label}")
                 if parsed:
                     if isinstance(parsed, list):

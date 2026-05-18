@@ -266,10 +266,10 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
         yield sse({"type": "start", "hostname": host.hostname})
 
         # Conecta WinRM
+        target = _make_fqdn(host.hostname, cfg.get("search", ""))
         try:
-            target = _make_fqdn(host.hostname, cfg.get("search", ""))
             yield sse({"type": "step", "step": "connect", "message": f"Conectando em {target}..."})
-            session = _connect(target, cfg)
+            session = _connect(target, cfg, operation_timeout_sec=60, read_timeout_sec=90)
             # Teste rápido
             result = session.run_ps("Write-Output 'OK'")
             if result.status_code != 0:
@@ -361,13 +361,15 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
             yield sse({"type": "step_fail", "step": "network", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 
-        # ---- LICENÇAS ----
+        # ---- LICENÇAS (timeout maior — WMI SoftwareLicensingProduct é lento em máquinas antigas) ----
         yield sse({"type": "step", "step": "licenses", "message": "🔑 Coletando licenças..."})
         try:
+            # Cria sessão dedicada com timeout estendido para licenças
+            lic_session = _connect(target, cfg, operation_timeout_sec=120, read_timeout_sec=180)
             licenses = []
             for ps_func, label in [(_ps_windows_license, "windows"), (_ps_office_license, "office")]:
                 try:
-                    raw = _run_ps(session, ps_func())
+                    raw = _run_ps(lic_session, ps_func())
                     parsed = _safe_json(raw, f"license-{label}")
                     if parsed:
                         if isinstance(parsed, list):

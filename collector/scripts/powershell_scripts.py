@@ -56,33 +56,43 @@ Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True" | For
 def ps_windows_license():
     """Coleta status de licença do Windows."""
     return r"""
-$ErrorActionPreference = "SilentlyContinue"
-$os = Get-CimInstance Win32_OperatingSystem
+$ErrorActionPreference = "Stop"
 try {
-    $lic = ciminstance SoftwareLicensingProduct -Filter "Name like '%Windows%' and PartialProductKey <> null" | Select-Object -First 1
-    $oem = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
-} catch {}
-
-$obj = @{
-    product             = "windows"
-    edition             = $os.Caption -replace "Microsoft Windows ", ""
-    version             = if ($os.Version -match "^10\.0\.(\d+)") { $matches[1] } else { $os.Version }
-    build               = $os.BuildNumber
-    license_channel     = if ($lic) { $lic.ProductKeyChannel } else { "" }
-    license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
-    partial_product_key = if ($lic) { $lic.PartialProductKey } else { "" }
-    oem_key_found       = [bool]$oem
+    $os = Get-CimInstance Win32_OperatingSystem
+    $lic = $null
+    $oem = $null
+    try {
+        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "Name like '%Windows%' and PartialProductKey <> null" | Select-Object -First 1
+    } catch {}
+    try {
+        $oem = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
+    } catch {}
+    $obj = @{
+        product             = "windows"
+        edition             = $os.Caption -replace "Microsoft Windows ", ""
+        version             = if ($os.Version -match "^10\.0\.(\d+)") { $matches[1] } else { $os.Version }
+        build               = $os.BuildNumber
+        license_channel     = if ($lic) { $lic.ProductKeyChannel } else { "" }
+        license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+        partial_product_key = if ($lic) { $lic.PartialProductKey } else { "" }
+        oem_key_found       = [bool]$oem
+    }
+    $obj | ConvertTo-Json -Compress
+} catch {
+    @{ product = "windows"; license_status = "error"; error = $_.Exception.Message } | ConvertTo-Json -Compress
 }
-$obj | ConvertTo-Json -Compress
 """
 
 
 def ps_office_license():
     """Coleta status de licença do Office (se instalado)."""
     return r"""
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "Stop"
 try {
-    $lic = ciminstance SoftwareLicensingProduct -Filter "Name like '%Office%' and PartialProductKey <> null" | Select-Object -First 1
+    $lic = $null
+    try {
+        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "Name like '%Office%' and PartialProductKey <> null" | Select-Object -First 1
+    } catch {}
     if (-not $lic) {
         # Tenta via Registry
         $keys = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Office" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "\\1[56789]\." -or $_.Name -match "\\16\." }
@@ -101,7 +111,7 @@ try {
         detection_method    = "WMI"
     } | ConvertTo-Json -Compress
 } catch {
-    @{ product = "office"; installed = $false; detection_method = "none" } | ConvertTo-Json -Compress
+    @{ product = "office"; installed = $false; detection_method = "error"; error = $_.Exception.Message } | ConvertTo-Json -Compress
 }
 """
 

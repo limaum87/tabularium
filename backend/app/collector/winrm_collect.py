@@ -41,7 +41,7 @@ def _make_fqdn(hostname, search):
     return hostname
 
 
-def _connect(hostname, cfg):
+def _connect(hostname, cfg, operation_timeout_sec=60, read_timeout_sec=90):
     """Cria sessão WinRM."""
     endpoint = f"{cfg['scheme']}://{hostname}:{cfg['port']}"
     return winrm.Session(
@@ -49,6 +49,8 @@ def _connect(hostname, cfg):
         auth=(cfg["username"], cfg["password"]),
         transport="ntlm",
         server_cert_validation="ignore",
+        operation_timeout_sec=operation_timeout_sec,
+        read_timeout_sec=read_timeout_sec,
     )
 
 
@@ -120,31 +122,42 @@ Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True" | For
 
 def _ps_windows_license():
     return r"""
-$ErrorActionPreference = "SilentlyContinue"
-$os = Get-CimInstance Win32_OperatingSystem
+$ErrorActionPreference = "Stop"
 try {
-    $lic = ciminstance SoftwareLicensingProduct -Filter "Name like '%Windows%' and PartialProductKey <> null" | Select-Object -First 1
-    $oem = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
-} catch {}
-$obj = @{
-    product             = "windows"
-    edition             = $os.Caption -replace "Microsoft Windows ", ""
-    version             = if ($os.Version -match "^10\.0\.(\d+)") { $matches[1] } else { $os.Version }
-    build               = $os.BuildNumber
-    license_channel     = if ($lic) { $lic.ProductKeyChannel } else { "" }
-    license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
-    partial_product_key = if ($lic) { $lic.PartialProductKey } else { "" }
-    oem_key_found       = [bool]$oem
+    $os = Get-CimInstance Win32_OperatingSystem
+    $lic = $null
+    $oem = $null
+    try {
+        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "Name like '%Windows%' and PartialProductKey <> null" | Select-Object -First 1
+    } catch {}
+    try {
+        $oem = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
+    } catch {}
+    $obj = @{
+        product             = "windows"
+        edition             = $os.Caption -replace "Microsoft Windows ", ""
+        version             = if ($os.Version -match "^10\.0\.(\d+)") { $matches[1] } else { $os.Version }
+        build               = $os.BuildNumber
+        license_channel     = if ($lic) { $lic.ProductKeyChannel } else { "" }
+        license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+        partial_product_key = if ($lic) { $lic.PartialProductKey } else { "" }
+        oem_key_found       = [bool]$oem
+    }
+    $obj | ConvertTo-Json -Compress
+} catch {
+    @{ product = "windows"; license_status = "error"; error = $_.Exception.Message } | ConvertTo-Json -Compress
 }
-$obj | ConvertTo-Json -Compress
 """
 
 
 def _ps_office_license():
     return r"""
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "Stop"
 try {
-    $lic = ciminstance SoftwareLicensingProduct -Filter "Name like '%Office%' and PartialProductKey <> null" | Select-Object -First 1
+    $lic = $null
+    try {
+        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "Name like '%Office%' and PartialProductKey <> null" | Select-Object -First 1
+    } catch {}
     if (-not $lic) {
         $keys = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Office" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "\\1[56789]\." -or $_.Name -match "\\16\." }
         $regVer = if ($keys) { ($keys[-1].Name -split "\\")[-1] } else { "" }
@@ -162,7 +175,7 @@ try {
         detection_method    = "WMI"
     } | ConvertTo-Json -Compress
 } catch {
-    @{ product = "office"; installed = $false; detection_method = "none" } | ConvertTo-Json -Compress
+    @{ product = "office"; installed = $false; detection_method = "error"; error = $_.Exception.Message } | ConvertTo-Json -Compress
 }
 """
 
