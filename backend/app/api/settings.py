@@ -78,17 +78,6 @@ def save_settings(body: SettingsBatch, db: Session = Depends(get_db), _=Depends(
     return {"detail": "Configurações salvas"}
 
 
-@router.delete("/{key}")
-def delete_setting(key: str, db: Session = Depends(get_db), _=Depends(require_role("admin"))):
-    """Remove uma configuração."""
-    s = db.query(Setting).filter(Setting.key == key).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Configuração não encontrada")
-    db.delete(s)
-    db.commit()
-    return {"detail": "Configuração removida"}
-
-
 # ---- Testes de Conexão ----
 
 @router.post("/test-ldap")
@@ -231,3 +220,14 @@ def apply_dns(body: DnsApplyInput, _=Depends(require_role("admin"))):
             "success": False,
             "message": f"Erro ao aplicar DNS: {str(e)[:200]}",
         }
+
+
+@router.delete("/{key}")
+def delete_setting(key: str, db: Session = Depends(get_db), _=Depends(require_role("admin"))):
+    """Remove uma configuração."""
+    s = db.query(Setting).filter(Setting.key == key).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Configuração não encontrada")
+    db.delete(s)
+    db.commit()
+    return {"detail": "Configuração removida"}
