@@ -1,0 +1,47 @@
+kind: pipeline
+type: docker
+name: deploy
+
+# Roda no runner local do wir-hub (192.168.0.159)
+node:
+  location: wir-hub
+
+trigger:
+  branch:
+    - main
+  event:
+    - push
+
+steps:
+  - name: deploy
+    image: docker:cli
+    volumes:
+      - name: dockersock
+        path: /var/run/docker.sock
+      - name: apps
+        path: /opt/infra/apps
+      - name: site
+        path: /opt/infra/infra/sites/tabularium-site
+      - name: ssh
+        path: /root/.ssh
+    commands:
+      - apk add --no-cache git openssh-client
+      - mkdir -p /root/.ssh && chmod 700 /root/.ssh
+      - ssh-keyscan -t rsa github.com >> /root/.ssh/known_hosts 2>/dev/null
+      - cd /opt/infra/apps/tabularium && git pull origin main
+      - cd /opt/infra/infra/sites/tabularium-site && docker compose pull && docker compose up -d --build
+      - docker image prune -f
+
+volumes:
+  - name: dockersock
+    host:
+      path: /var/run/docker.sock
+  - name: apps
+    host:
+      path: /opt/infra/apps
+  - name: site
+    host:
+      path: /opt/infra/infra/sites/tabularium-site
+  - name: ssh
+    host:
+      path: /home/accept/.ssh
