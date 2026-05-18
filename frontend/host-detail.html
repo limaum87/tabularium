@@ -216,7 +216,7 @@
 
         async function runDetailAction(action) {
             const btn = document.getElementById(`btn-${action.replace('-', '-')}`);
-            const btnMap = { 'ping': 'btn-ping', 'test-winrm': 'btn-test-winrm', 'enable-winrm': 'btn-enable-winrm' };
+            const btnMap = { 'ping': 'btn-ping', 'test-winrm': 'btn-test-winrm', 'enable-winrm': 'btn-enable-winrm', 'collect': 'btn-collect' };
             const actionBtn = document.getElementById(btnMap[action]);
             const resultEl = document.getElementById('action-result');
 
@@ -241,6 +241,10 @@
                         debugHtml = `<div style="margin-top:6px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono);background:var(--bg-dark,#1a1a2e);padding:6px 10px;border-radius:4px;">${data.debug.map(d => `<div>${d}</div>`).join('')}</div>`;
                     }
                     resultEl.innerHTML = `<div class="action-result success">✓ ${data.message}${debugHtml}</div>`;
+                    // Recarrega página após coleta com sucesso
+                    if (action === 'collect') {
+                        setTimeout(() => { loadHost(); resultEl.style.display = 'none'; }, 2000);
+                    }
                 } else {
                     let debugHtml = '';
                     if (data.debug && data.debug.length > 0) {
