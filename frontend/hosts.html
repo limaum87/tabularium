@@ -505,9 +505,17 @@
                 const data = await res.json();
 
                 if (data.success) {
-                    resultCell.innerHTML = `<div class="action-result success">✓ ${data.message}</div>`;
+                    let debugHtml = '';
+                    if (data.debug && data.debug.length > 0) {
+                        debugHtml = `<div style="margin-top:4px;font-size:10px;color:var(--text-muted);font-family:var(--font-mono);background:var(--bg-dark,#1a1a2e);padding:4px 8px;border-radius:3px;">${data.debug.map(d => `<div>${d}</div>`).join('')}</div>`;
+                    }
+                    resultCell.innerHTML = `<div class="action-result success">✓ ${data.message}${debugHtml}</div>`;
                 } else {
-                    resultCell.innerHTML = `<div class="action-result error">✗ ${data.message}</div>`;
+                    let debugHtml = '';
+                    if (data.debug && data.debug.length > 0) {
+                        debugHtml = `<div style="margin-top:4px;font-size:10px;color:var(--text-muted);font-family:var(--font-mono);background:var(--bg-dark,#1a1a2e);padding:4px 8px;border-radius:3px;">${data.debug.map(d => `<div>${d}</div>`).join('')}</div>`;
+                    }
+                    resultCell.innerHTML = `<div class="action-result error">✗ ${data.message}${debugHtml}</div>`;
                 }
             } catch (err) {
                 resultCell.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;

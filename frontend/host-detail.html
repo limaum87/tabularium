@@ -235,9 +235,17 @@
                 }
                 const data = await res.json();
                 if (data.success) {
-                    resultEl.innerHTML = `<div class="action-result success">✓ ${data.message}</div>`;
+                    let debugHtml = '';
+                    if (data.debug && data.debug.length > 0) {
+                        debugHtml = `<div style="margin-top:6px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono);background:var(--bg-dark,#1a1a2e);padding:6px 10px;border-radius:4px;">${data.debug.map(d => `<div>${d}</div>`).join('')}</div>`;
+                    }
+                    resultEl.innerHTML = `<div class="action-result success">✓ ${data.message}${debugHtml}</div>`;
                 } else {
-                    resultEl.innerHTML = `<div class="action-result error">✗ ${data.message}</div>`;
+                    let debugHtml = '';
+                    if (data.debug && data.debug.length > 0) {
+                        debugHtml = `<div style="margin-top:6px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono);background:var(--bg-dark,#1a1a2e);padding:6px 10px;border-radius:4px;">${data.debug.map(d => `<div>${d}</div>`).join('')}</div>`;
+                    }
+                    resultEl.innerHTML = `<div class="action-result error">✗ ${data.message}${debugHtml}</div>`;
                 }
             } catch (err) {
                 resultEl.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;

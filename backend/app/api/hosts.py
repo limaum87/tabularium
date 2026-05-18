@@ -216,38 +216,79 @@ def delete_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_curre
 
 @router.post("/{host_id}/action/ping")
 def action_ping(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """Testa conectividade ping com o host."""
+    """Testa conectividade ping com o host com diagnóstico de DNS."""
     import subprocess
+    import socket
     import re
 
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host não encontrado")
 
+    debug = []
+    hostname = host.hostname
+
+    # 1. Lê resolv.conf atual
+    resolv_content = ""
+    try:
+        with open("/etc/resolv.conf", "r") as f:
+            resolv_content = f.read().strip()
+        debug.append(f"resolv.conf: {resolv_content.replace(chr(10), ' | ')}")
+    except Exception as e:
+        debug.append(f"resolv.conf: erro ao ler: {e}")
+
+    # 2. Tenta resolver DNS
+    resolved_ip = None
+    try:
+        results = socket.getaddrinfo(hostname, None)
+        ips = list(set(addr[4][0] for addr in results))
+        resolved_ip = ips[0] if ips else None
+        debug.append(f"DNS resolveu: {hostname} → {', '.join(ips)}")
+    except socket.gaierror as e:
+        debug.append(f"DNS falhou para '{hostname}': {e}")
+    except Exception as e:
+        debug.append(f"DNS erro: {e}")
+
+    # 3. Executa ping
     try:
         result = subprocess.run(
-            ["ping", "-c", "3", "-W", "3", host.hostname],
+            ["ping", "-c", "3", "-W", "3", hostname],
             capture_output=True, text=True, timeout=15
         )
+        ping_output = (result.stdout or "").strip()
+        ping_stderr = (result.stderr or "").strip()
+        debug.append(f"ping exit code: {result.returncode}")
+        if ping_stderr:
+            debug.append(f"ping stderr: {ping_stderr[-200:]}")
+        if ping_output:
+            debug.append(f"ping output: {ping_output[-200:]}")
+
         if result.returncode == 0:
-            avg_match = re.search(r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", result.stdout)
+            avg_match = re.search(r"rtt min/avg/max/mdev = [\d.]+/([\d.]+)/", ping_output)
             avg_ms = float(avg_match.group(1)) if avg_match else None
+            msg = f"{hostname} respondeu ao ping" + (f" ({avg_ms:.0f}ms)" if avg_ms else "")
+            if resolved_ip:
+                msg += f" [IP: {resolved_ip}]"
             return {
                 "success": True,
-                "message": f"{host.hostname} respondeu ao ping" + (f" ({avg_ms:.0f}ms)" if avg_ms else ""),
-                "hostname": host.hostname,
+                "message": msg,
+                "hostname": hostname,
+                "resolved_ip": resolved_ip,
                 "avg_ms": avg_ms,
+                "debug": debug,
             }
         else:
             return {
                 "success": False,
-                "message": f"{host.hostname} não respondeu ao ping",
-                "hostname": host.hostname,
+                "message": f"{hostname} não respondeu ao ping" + (f" [resolveu: {resolved_ip}]" if resolved_ip else " [DNS não resolveu]"),
+                "hostname": hostname,
+                "resolved_ip": resolved_ip,
+                "debug": debug,
             }
     except subprocess.TimeoutExpired:
-        return {"success": False, "message": f"Timeout ao pingar {host.hostname}", "hostname": host.hostname}
+        return {"success": False, "message": f"Timeout ao pingar {hostname}", "hostname": hostname, "resolved_ip": resolved_ip, "debug": debug}
     except Exception as e:
-        return {"success": False, "message": f"Erro: {str(e)[:200]}", "hostname": host.hostname}
+        return {"success": False, "message": f"Erro: {str(e)[:200]}", "hostname": hostname, "resolved_ip": resolved_ip, "debug": debug}
 
 
 @router.post("/{host_id}/action/test-winrm")
