@@ -278,7 +278,7 @@
                     tbody.innerHTML += `<tr id="row-${h.id}">
                         <td class="mono">${h.hostname}</td>
                         <td>${h.domain || '—'}</td>
-                        <td><span class="badge-status ${pingBadge}" title="Ping: ${pingDt}">📡 ${h.ping_status || '?'}</span></td>
+                        <td><span class="badge-status ${pingBadge}">📡 ${h.ping_status || '?'}</span></td>
                         <td><span class="badge-status ${statusBadge}" title="WinRM">🔌 ${h.status}</span></td>
                         <td>${dt}</td>
                         <td style="text-align:right"><a href="/host-detail.html?id=${h.id}" style="font-size:12px;font-family:var(--font-mono);color:var(--accent);">Ver detalhes →</a></td>
