@@ -258,7 +258,7 @@ def action_collect(host_id: int, db: Session = Depends(get_db), _=Depends(get_cu
     try:
         data = collect_host(host.hostname, cfg)
     except Exception as e:
-        return {"success": False, "message": f"Falha na coleta: {str(e)[:200]}", "hostname": host.hostname}
+        return {"success": False, "message": f"Falha na conexão WinRM: {str(e)[:200]}", "hostname": host.hostname, "debug": ["Não foi possível conectar ao host."]}
 
     # Salva no banco (mesma lógica do checkin)
     now = datetime.utcnow()
@@ -384,6 +384,7 @@ def action_collect(host_id: int, db: Session = Depends(get_db), _=Depends(get_cu
         "success": True,
         "message": msg,
         "hostname": host.hostname,
+        "debug": data.get("debug", []),
     }
 
 

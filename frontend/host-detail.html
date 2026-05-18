@@ -54,6 +54,17 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner {
+            display: inline-block;
+            width: 14px; height: 14px;
+            border: 2px solid var(--text-muted);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin .6s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
     </style>
 </head>
 <body>
@@ -215,25 +226,44 @@
         loadHost();
 
         async function runDetailAction(action) {
-            const btn = document.getElementById(`btn-${action.replace('-', '-')}`);
             const btnMap = { 'ping': 'btn-ping', 'test-winrm': 'btn-test-winrm', 'enable-winrm': 'btn-enable-winrm', 'collect': 'btn-collect' };
             const actionBtn = document.getElementById(btnMap[action]);
             const resultEl = document.getElementById('action-result');
+            const labels = { 'ping': '📡 Testar Ping', 'test-winrm': '🔌 Testar WinRM', 'enable-winrm': '⚡ Ativar WinRM', 'collect': '🔄 Coletar Dados' };
 
             if (actionBtn) {
                 actionBtn.disabled = true;
-                actionBtn.style.opacity = '0.5';
+                actionBtn.innerHTML = '<span class="spinner"></span>' + (labels[action] || action);
             }
 
+            const isCollect = action === 'collect';
+            const loadingMsg = isCollect
+                ? '<span class="spinner"></span> Coletando dados do host... Isso pode levar até 2 minutos. Aguarde.'
+                : '⏳ Executando...';
             resultEl.style.display = 'block';
-            resultEl.innerHTML = '<div class="action-result loading">⏳ Executando...</div>';
+            resultEl.innerHTML = `<div class="action-result loading">${loadingMsg}</div>`;
 
             try {
-                const res = await apiFetch(`/api/hosts/${hostId}/action/${action}`, { method: 'POST' });
-                if (!res) {
-                    resultEl.innerHTML = '<div class="action-result error">✗ Erro de conexão com a API</div>';
+                const controller = new AbortController();
+                const timeout = isCollect ? 180000 : 60000;
+                const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+                const res = await fetch(`/api/hosts/${hostId}/action/${action}`, {
+                    method: 'POST',
+                    headers: { ...authHeaders() },
+                    signal: controller.signal,
+                });
+                clearTimeout(timeoutId);
+
+                if (!res.ok) {
+                    if (res.status === 504) {
+                        resultEl.innerHTML = '<div class="action-result error">✗ Timeout do servidor (504). A coleta demorou demais. Tente novamente — dados parciais podem ter sido salvos. Recarregue a página.</div>';
+                    } else {
+                        resultEl.innerHTML = `<div class="action-result error">✗ Erro HTTP ${res.status}</div>`;
+                    }
                     return;
                 }
+
                 const data = await res.json();
                 if (data.success) {
                     let debugHtml = '';
@@ -241,8 +271,7 @@
                         debugHtml = `<div style="margin-top:6px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono);background:var(--bg-dark,#1a1a2e);padding:6px 10px;border-radius:4px;">${data.debug.map(d => `<div>${d}</div>`).join('')}</div>`;
                     }
                     resultEl.innerHTML = `<div class="action-result success">✓ ${data.message}${debugHtml}</div>`;
-                    // Recarrega página após coleta com sucesso
-                    if (action === 'collect') {
+                    if (isCollect) {
                         setTimeout(() => { loadHost(); resultEl.style.display = 'none'; }, 2000);
                     }
                 } else {
@@ -253,15 +282,19 @@
                     resultEl.innerHTML = `<div class="action-result error">✗ ${data.message}${debugHtml}</div>`;
                 }
             } catch (err) {
-                resultEl.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;
+                if (err.name === 'AbortError') {
+                    resultEl.innerHTML = '<div class="action-result error">✗ Timeout — a requisição demorou demais. Dados parciais podem ter sido salvos. Recarregue a página para verificar.</div>';
+                } else {
+                    resultEl.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;
+                }
             }
 
             if (actionBtn) {
                 actionBtn.disabled = false;
-                actionBtn.style.opacity = '1';
+                actionBtn.textContent = labels[action] || action;
             }
 
-            setTimeout(() => { resultEl.style.display = 'none'; }, 20000);
+            setTimeout(() => { resultEl.style.display = 'none'; }, isCollect ? 30000 : 20000);
         }
     </script>
 </body>

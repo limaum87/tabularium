@@ -197,34 +197,45 @@ def collect_host(hostname, cfg):
 
     data = {"hostname": hostname}
     errors = []
+    debug = []
 
     # Hardware
+    debug.append("📡 Coletando hardware...")
     try:
         raw = _run_ps(session, _ps_hardware())
         data["hardware"] = _safe_json(raw, "hardware")
+        debug.append(f"✓ Hardware OK")
     except Exception as e:
         errors.append(f"hardware: {e}")
         data["hardware"] = None
+        debug.append(f"✗ Hardware falhou: {str(e)[:80]}")
 
     # Discos
+    debug.append("💾 Coletando discos...")
     try:
         raw = _run_ps(session, _ps_disks())
         parsed = _safe_json(raw, "disks")
         data["disks"] = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+        debug.append(f"✓ {len(data['disks'])} disco(s)")
     except Exception as e:
         errors.append(f"discos: {e}")
         data["disks"] = []
+        debug.append(f"✗ Discos falhou: {str(e)[:80]}")
 
     # Rede
+    debug.append("🌐 Coletando rede...")
     try:
         raw = _run_ps(session, _ps_network())
         parsed = _safe_json(raw, "network")
         data["network"] = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+        debug.append(f"✓ {len(data['network'])} adaptador(es)")
     except Exception as e:
         errors.append(f"rede: {e}")
         data["network"] = []
+        debug.append(f"✗ Rede falhou: {str(e)[:80]}")
 
     # Licenças
+    debug.append("🔑 Coletando licenças...")
     licenses = []
     for ps_func, label in [(_ps_windows_license, "windows"), (_ps_office_license, "office")]:
         try:
@@ -235,18 +246,24 @@ def collect_host(hostname, cfg):
                     licenses.extend(parsed)
                 else:
                     licenses.append(parsed)
+            debug.append(f"✓ Licença {label}")
         except Exception as e:
             errors.append(f"licença {label}: {e}")
+            debug.append(f"✗ Licença {label}: {str(e)[:80]}")
     data["licenses"] = licenses
 
-    # Software
+    # Software (mais demorado)
+    debug.append("📦 Coletando softwares...")
     try:
         raw = _run_ps(session, _ps_software())
         parsed = _safe_json(raw, "software")
         data["software"] = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+        debug.append(f"✓ {len(data['software'])} software(s)")
     except Exception as e:
         errors.append(f"software: {e}")
         data["software"] = []
+        debug.append(f"✗ Software falhou: {str(e)[:80]}")
 
     data["errors"] = errors
+    data["debug"] = debug
     return data
