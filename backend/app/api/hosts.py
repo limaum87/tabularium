@@ -308,6 +308,7 @@ def action_test_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get
     winrm_pass = db.query(Setting).filter(Setting.key == "password", Setting.category == "winrm").first()
     winrm_scheme = db.query(Setting).filter(Setting.key == "scheme", Setting.category == "winrm").first()
     winrm_port = db.query(Setting).filter(Setting.key == "port", Setting.category == "winrm").first()
+    dns_search = db.query(Setting).filter(Setting.key == "search_domain", Setting.category == "dns").first()
 
     if not winrm_user or not winrm_pass:
         return {"success": False, "message": "Credenciais WinRM não configuradas. Vá em Configurações.", "hostname": host.hostname}
@@ -315,8 +316,14 @@ def action_test_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get
     scheme = winrm_scheme.value if winrm_scheme else "http"
     port = int(winrm_port.value) if winrm_port else 5985
 
+    # Monta FQDN se hostname não contém ponto
+    target_host = host.hostname
+    search = dns_search.value.strip() if dns_search and dns_search.value else ""
+    if "." not in target_host and search:
+        target_host = f"{target_host}.{search}"
+
     try:
-        endpoint = f"{scheme}://{host.hostname}:{port}"
+        endpoint = f"{scheme}://{target_host}:{port}"
         session = winrm.Session(
             endpoint,
             auth=(winrm_user.value, winrm_pass.value),
@@ -355,9 +362,16 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
     from app.core.database import Setting
     winrm_user = db.query(Setting).filter(Setting.key == "username", Setting.category == "winrm").first()
     winrm_pass = db.query(Setting).filter(Setting.key == "password", Setting.category == "winrm").first()
+    dns_search = db.query(Setting).filter(Setting.key == "search_domain", Setting.category == "dns").first()
 
     if not winrm_user or not winrm_pass:
         return {"success": False, "message": "Credenciais WinRM não configuradas", "hostname": host.hostname}
+
+    # Monta FQDN se hostname não contém ponto
+    target_host = host.hostname
+    search = dns_search.value.strip() if dns_search and dns_search.value else ""
+    if "." not in target_host and search:
+        target_host = f"{target_host}.{search}"
 
     try:
         from impacket.smbconnection import SMBConnection  # noqa: F401
@@ -395,9 +409,9 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
 
     # Monta credencial no formato impacket: domain/user:password@host
     if domain:
-        creds = f"{domain}/{user}:{password}@{host.hostname}"
+        creds = f"{domain}/{user}:{password}@{target_host}"
     else:
-        creds = f"{user}:{password}@{host.hostname}"
+        creds = f"{user}:{password}@{target_host}"
 
     # Encontra o script psexec do impacket
     psexec_cmd = None
