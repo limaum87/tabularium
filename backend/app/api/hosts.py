@@ -237,6 +237,156 @@ def ping_sweep(db: Session = Depends(get_db), _=Depends(get_current_user)):
     }
 
 
+@router.post("/{host_id}/action/collect")
+def action_collect(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Coleta manual de dados via WinRM e atualiza o banco."""
+    try:
+        import winrm  # noqa: F401
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Biblioteca pywinrm não instalada")
+
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+
+    from app.collector.winrm_collect import collect_host, _get_settings
+
+    cfg = _get_settings(db)
+    if not cfg:
+        return {"success": False, "message": "Credenciais WinRM não configuradas. Vá em Configurações.", "hostname": host.hostname}
+
+    try:
+        data = collect_host(host.hostname, cfg)
+    except Exception as e:
+        return {"success": False, "message": f"Falha na coleta: {str(e)[:200]}", "hostname": host.hostname}
+
+    # Salva no banco (mesma lógica do checkin)
+    now = datetime.utcnow()
+    host.status = "online"
+    host.last_seen = now
+    host.updated_at = now
+    if host.is_legacy:
+        host.is_legacy = False
+        host.legacy_since = None
+
+    host_id_val = host.id
+
+    # Hardware
+    hw = data.get("hardware")
+    if hw:
+        existing = db.query(HostHardware).filter(HostHardware.host_id == host_id_val).first()
+        hw_data = {
+            "manufacturer": hw.get("manufacturer"),
+            "model": hw.get("model"),
+            "serial": hw.get("serial"),
+            "cpu": hw.get("cpu"),
+            "ram_gb": hw.get("ram_gb"),
+            "bios_version": hw.get("bios_version"),
+            "last_boot": hw.get("last_boot"),
+            "updated_at": now,
+        }
+        if existing:
+            for k, v in hw_data.items():
+                setattr(existing, k, v)
+        else:
+            db.add(HostHardware(host_id=host_id_val, **hw_data))
+
+    # Discos
+    disks = data.get("disks")
+    if disks is not None:
+        db.query(HostDisk).filter(HostDisk.host_id == host_id_val).delete()
+        for d in disks:
+            db.add(HostDisk(
+                host_id=host_id_val,
+                drive=d.get("drive"),
+                total_gb=d.get("total_gb"),
+                free_gb=d.get("free_gb"),
+                filesystem=d.get("filesystem"),
+                updated_at=now,
+            ))
+
+    # Rede
+    network = data.get("network")
+    if network is not None:
+        db.query(HostNetwork).filter(HostNetwork.host_id == host_id_val).delete()
+        for n in network:
+            db.add(HostNetwork(
+                host_id=host_id_val,
+                ip=n.get("ip"),
+                mac=n.get("mac"),
+                gateway=n.get("gateway"),
+                dns=n.get("dns"),
+                adapter_name=n.get("adapter_name"),
+                updated_at=now,
+            ))
+
+    # Licenças
+    licenses = data.get("licenses")
+    if licenses is not None:
+        db.query(HostLicense).filter(HostLicense.host_id == host_id_val).delete()
+        for lic in licenses:
+            db.add(HostLicense(
+                host_id=host_id_val,
+                product=lic.get("product", "windows"),
+                edition=lic.get("edition"),
+                version=lic.get("version"),
+                channel=lic.get("channel"),
+                license_status=lic.get("license_status"),
+                partial_product_key=lic.get("partial_product_key"),
+                oem_key_found=lic.get("oem_key_found"),
+                detection_method=lic.get("detection_method"),
+                updated_at=now,
+            ))
+
+    # Software
+    software = data.get("software")
+    if software is not None:
+        db.query(HostSoftware).filter(HostSoftware.host_id == host_id_val).delete()
+        for sw in software:
+            db.add(HostSoftware(
+                host_id=host_id_val,
+                name=sw.get("name"),
+                version=sw.get("version"),
+                publisher=sw.get("publisher"),
+                install_date=sw.get("install_date"),
+                install_location=sw.get("install_location"),
+                updated_at=now,
+            ))
+
+    # Scan history
+    db.add(ScanHistory(
+        host_id=host_id_val,
+        hostname=host.hostname,
+        status="success",
+        started_at=now,
+        finished_at=now,
+    ))
+
+    db.commit()
+
+    collected = []
+    if hw:
+        collected.append("hardware")
+    if disks:
+        collected.append(f"{len(disks)} discos")
+    if network:
+        collected.append(f"{len(network)} redes")
+    if licenses:
+        collected.append(f"{len(licenses)} licenças")
+    if software:
+        collected.append(f"{len(software)} softwares")
+
+    msg = f"Coleta OK — {', '.join(collected)}"
+    if data.get("errors"):
+        msg += f" | Avisos: {'; '.join(data['errors'][:3])}"
+
+    return {
+        "success": True,
+        "message": msg,
+        "hostname": host.hostname,
+    }
+
+
 @router.delete("/{host_id}")
 def delete_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Exclui permanentemente um host e todos os dados associados."""

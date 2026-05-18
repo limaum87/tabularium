@@ -1,0 +1,252 @@
+"""Tabularium Backend — Coleta manual via WinRM.
+
+Reutiliza os scripts PowerShell do collector para coletar dados
+de um host individual sob demanda.
+"""
+
+import json
+import winrm
+
+
+def _get_settings(db):
+    """Busca configurações WinRM e DNS do banco."""
+    from app.core.database import Setting
+
+    winrm_user = db.query(Setting).filter(Setting.key == "username", Setting.category == "winrm").first()
+    winrm_pass = db.query(Setting).filter(Setting.key == "password", Setting.category == "winrm").first()
+    winrm_scheme = db.query(Setting).filter(Setting.key == "scheme", Setting.category == "winrm").first()
+    winrm_port = db.query(Setting).filter(Setting.key == "port", Setting.category == "winrm").first()
+    dns_search = db.query(Setting).filter(Setting.key == "search_domain", Setting.category == "dns").first()
+
+    if not winrm_user or not winrm_pass:
+        return None
+
+    scheme = winrm_scheme.value if winrm_scheme else "http"
+    port = int(winrm_port.value) if winrm_port else 5985
+    search = dns_search.value.strip() if dns_search and dns_search.value else ""
+
+    return {
+        "username": winrm_user.value,
+        "password": winrm_pass.value,
+        "scheme": scheme,
+        "port": port,
+        "search": search,
+    }
+
+
+def _make_fqdn(hostname, search):
+    """Monta FQDN se necessário."""
+    if "." not in hostname and search:
+        return f"{hostname}.{search}"
+    return hostname
+
+
+def _connect(hostname, cfg):
+    """Cria sessão WinRM."""
+    endpoint = f"{cfg['scheme']}://{hostname}:{cfg['port']}"
+    return winrm.Session(
+        endpoint,
+        auth=(cfg["username"], cfg["password"]),
+        transport="ntlm",
+        server_cert_validation="ignore",
+    )
+
+
+def _run_ps(session, script):
+    """Executa PowerShell e retorna stdout."""
+    result = session.run_ps(script)
+    if result.status_code != 0:
+        stderr = result.std_err.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"PowerShell error: {stderr[:200]}")
+    return result.std_out.decode("utf-8", errors="replace").strip()
+
+
+def _safe_json(raw, context=""):
+    """Parse JSON seguro."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+# ---- Scripts PowerShell (mesmos do collector) ----
+
+def _ps_hardware():
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+$obj = @{
+    manufacturer = (Get-CimInstance Win32_ComputerSystem).Manufacturer
+    model        = (Get-CimInstance Win32_ComputerSystem).Model
+    serial       = (Get-CimInstance Win32_BIOS).SerialNumber
+    cpu          = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+    ram_gb       = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
+    bios_version = (Get-CimInstance Win32_BIOS).SMBIOSBIOSVersion
+    last_boot    = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString("yyyy-MM-dd HH:mm:ss")
+}
+$obj | ConvertTo-Json -Compress
+"""
+
+
+def _ps_disks():
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+    @{
+        drive      = $_.DeviceID
+        total_gb   = [math]::Round($_.Size / 1GB, 1)
+        free_gb    = [math]::Round($_.FreeSpace / 1GB, 1)
+        filesystem = $_.FileSystem
+    }
+} | ConvertTo-Json -Compress
+"""
+
+
+def _ps_network():
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True" | ForEach-Object {
+    @{
+        ip            = ($_.IPAddress | Where-Object { $_ -match "\d+\.\d+\.\d+\.\d+" }) -join ","
+        mac           = $_.MACAddress
+        gateway       = ($_.DefaultIPGateway -join ",")
+        dns           = ($_.DNSServerSearchOrder -join ",")
+        adapter_name  = (Get-CimInstance Win32_NetworkAdapter -Filter "Index=$($_.SettingID.Split('=')[-1].Trim('}'))").NetConnectionID
+    }
+} | ConvertTo-Json -Compress
+"""
+
+
+def _ps_windows_license():
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+$os = Get-CimInstance Win32_OperatingSystem
+try {
+    $lic = ciminstance SoftwareLicensingProduct -Filter "Name like '%Windows%' and PartialProductKey <> null" | Select-Object -First 1
+    $oem = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
+} catch {}
+$obj = @{
+    product             = "windows"
+    edition             = $os.Caption -replace "Microsoft Windows ", ""
+    version             = if ($os.Version -match "^10\.0\.(\d+)") { $matches[1] } else { $os.Version }
+    build               = $os.BuildNumber
+    license_channel     = if ($lic) { $lic.ProductKeyChannel } else { "" }
+    license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+    partial_product_key = if ($lic) { $lic.PartialProductKey } else { "" }
+    oem_key_found       = [bool]$oem
+}
+$obj | ConvertTo-Json -Compress
+"""
+
+
+def _ps_office_license():
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+try {
+    $lic = ciminstance SoftwareLicensingProduct -Filter "Name like '%Office%' and PartialProductKey <> null" | Select-Object -First 1
+    if (-not $lic) {
+        $keys = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Office" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "\\1[56789]\." -or $_.Name -match "\\16\." }
+        $regVer = if ($keys) { ($keys[-1].Name -split "\\")[-1] } else { "" }
+        @{ product = "office"; installed = [bool]$regVer; version = $regVer; detection_method = "Registry" } | ConvertTo-Json -Compress
+        return
+    }
+    @{
+        product             = "office"
+        installed           = $true
+        version             = ($lic.Name -replace "Office ","" -replace " .*","").Trim()
+        edition             = $lic.Name
+        license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+        partial_product_key = $lic.PartialProductKey
+        channel             = $lic.ProductKeyChannel
+        detection_method    = "WMI"
+    } | ConvertTo-Json -Compress
+} catch {
+    @{ product = "office"; installed = $false; detection_method = "none" } | ConvertTo-Json -Compress
+}
+"""
+
+
+def _ps_software():
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+$paths = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+)
+$items = @()
+foreach ($path in $paths) {
+    $items += Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName }
+}
+$items | Sort-Object DisplayName -Unique | ForEach-Object {
+    @{
+        name              = $_.DisplayName
+        version           = $_.DisplayVersion
+        publisher         = $_.Publisher
+        install_date      = $_.InstallDate
+        install_location  = $_.InstallLocation
+    }
+} | ConvertTo-Json -Compress
+"""
+
+
+def collect_host(hostname, cfg):
+    """Coleta todos os dados de um host via WinRM. Retorna dict com resultados."""
+    target = _make_fqdn(hostname, cfg.get("search", ""))
+    session = _connect(target, cfg)
+
+    data = {"hostname": hostname}
+    errors = []
+
+    # Hardware
+    try:
+        raw = _run_ps(session, _ps_hardware())
+        data["hardware"] = _safe_json(raw, "hardware")
+    except Exception as e:
+        errors.append(f"hardware: {e}")
+        data["hardware"] = None
+
+    # Discos
+    try:
+        raw = _run_ps(session, _ps_disks())
+        parsed = _safe_json(raw, "disks")
+        data["disks"] = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+    except Exception as e:
+        errors.append(f"discos: {e}")
+        data["disks"] = []
+
+    # Rede
+    try:
+        raw = _run_ps(session, _ps_network())
+        parsed = _safe_json(raw, "network")
+        data["network"] = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+    except Exception as e:
+        errors.append(f"rede: {e}")
+        data["network"] = []
+
+    # Licenças
+    licenses = []
+    for ps_func, label in [(_ps_windows_license, "windows"), (_ps_office_license, "office")]:
+        try:
+            raw = _run_ps(session, ps_func())
+            parsed = _safe_json(raw, f"license-{label}")
+            if parsed:
+                if isinstance(parsed, list):
+                    licenses.extend(parsed)
+                else:
+                    licenses.append(parsed)
+        except Exception as e:
+            errors.append(f"licença {label}: {e}")
+    data["licenses"] = licenses
+
+    # Software
+    try:
+        raw = _run_ps(session, _ps_software())
+        parsed = _safe_json(raw, "software")
+        data["software"] = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+    except Exception as e:
+        errors.append(f"software: {e}")
+        data["software"] = []
+
+    data["errors"] = errors
+    return data
