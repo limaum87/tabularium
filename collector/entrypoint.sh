@@ -7,6 +7,7 @@ set -e
 echo "[entrypoint] Tabularium Collector iniciando..."
 
 DNS_SERVERS="${DNS_SERVERS:-}"
+DNS_SEARCH="${DNS_SEARCH:-}"
 
 if [ -n "$DNS_SERVERS" ]; then
     echo "[entrypoint] Aplicando DNS: $DNS_SERVERS"
@@ -16,6 +17,9 @@ if [ -n "$DNS_SERVERS" ]; then
     fi
 
     {
+        if [ -n "$DNS_SEARCH" ]; then
+            echo "search $DNS_SEARCH"
+        fi
         for ip in $(echo "$DNS_SERVERS" | tr ',' ' '); do
             echo "nameserver $ip"
         done

@@ -41,6 +41,11 @@ class WinrmTestInput(BaseModel):
 
 class DnsApplyInput(BaseModel):
     dns_servers: str  # IPs separados por vírgula, ex: "10.0.0.1,10.0.0.2"
+    search_domain: str = ""  # ex: "empresa.local"
+
+
+class DnsTestInput(BaseModel):
+    hostname: str  # nome para testar resolução, ex: "wir-adm-01"
 
 
 # ---- CRUD ----
@@ -181,34 +186,36 @@ def apply_dns(body: DnsApplyInput, _=Depends(require_role("admin"))):
 
     # Monta o conteúdo do resolv.conf
     lines = []
-    # Preserva search/domain se existir
-    try:
-        with open(resolv_path, "r") as f:
-            for line in f:
-                if line.strip().startswith("search ") or line.strip().startswith("domain "):
-                    lines.append(line.rstrip())
-    except FileNotFoundError:
-        pass
+
+    # Search domain
+    search = body.search_domain.strip()
+    if search:
+        lines.append(f"search {search}")
 
     # Adiciona os nameservers
     for ip in dns_ips:
         lines.append(f"nameserver {ip}")
 
     try:
-        # Em containers, /etc/resolv.conf pode ser um symlink. Resolve isso.
-        real_path = os.path.realpath(resolv_path)
-
-        # Se for symlink para um arquivo read-only (ex: /proc/net/pnp), remove e recria
+        # Se for symlink para arquivo read-only, remove e recria como arquivo normal
         if os.path.islink(resolv_path):
             os.unlink(resolv_path)
 
         with open(resolv_path, "w") as f:
             f.write("\n".join(lines) + "\n")
 
+        # Força flush do resolver do glibc
+        try:
+            with open("/proc/net/pnp", "r"):
+                pass
+        except Exception:
+            pass
+
         return {
             "success": True,
-            "message": f"DNS aplicado: {', '.join(dns_ips)}",
+            "message": f"DNS aplicado: {', '.join(dns_ips)}" + (f" | Search: {search}" if search else ""),
             "dns_servers": dns_ips,
+            "search_domain": search,
         }
     except PermissionError:
         return {
@@ -219,6 +226,51 @@ def apply_dns(body: DnsApplyInput, _=Depends(require_role("admin"))):
         return {
             "success": False,
             "message": f"Erro ao aplicar DNS: {str(e)[:200]}",
+        }
+
+
+@router.post("/test-dns")
+def test_dns(body: DnsTestInput, _=Depends(require_role("admin"))):
+    """Testa resolução DNS de um hostname dentro do container."""
+    import socket
+
+    hostname = body.hostname.strip()
+    if not hostname:
+        return {"success": False, "message": "Hostname vazio"}
+
+    # Mostra o resolv.conf atual
+    resolv_content = ""
+    try:
+        with open("/etc/resolv.conf", "r") as f:
+            resolv_content = f.read().strip()
+    except Exception:
+        pass
+
+    try:
+        results = socket.getaddrinfo(hostname, None)
+        ips = list(set(addr[4][0] for addr in results))
+        return {
+            "success": True,
+            "message": f"{hostname} resolveu para: {', '.join(ips)}",
+            "hostname": hostname,
+            "ips": ips,
+            "resolv_conf": resolv_content,
+        }
+    except socket.gaierror as e:
+        return {
+            "success": False,
+            "message": f"Falha ao resolver '{hostname}': {str(e)}",
+            "hostname": hostname,
+            "ips": [],
+            "resolv_conf": resolv_content,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Erro: {str(e)[:200]}",
+            "hostname": hostname,
+            "ips": [],
+            "resolv_conf": resolv_content,
         }
 
 

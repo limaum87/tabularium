@@ -8,6 +8,7 @@ echo "[entrypoint] Tabularium Backend iniciando..."
 
 # Tenta ler DNS das variáveis de ambiente (opcional)
 DNS_SERVERS="${DNS_SERVERS:-}"
+DNS_SEARCH="${DNS_SEARCH:-}"
 
 if [ -n "$DNS_SERVERS" ]; then
     echo "[entrypoint] Aplicando DNS: $DNS_SERVERS"
@@ -19,6 +20,9 @@ if [ -n "$DNS_SERVERS" ]; then
 
     # Escreve resolv.conf
     {
+        if [ -n "$DNS_SEARCH" ]; then
+            echo "search $DNS_SEARCH"
+        fi
         for ip in $(echo "$DNS_SERVERS" | tr ',' ' '); do
             echo "nameserver $ip"
         done
