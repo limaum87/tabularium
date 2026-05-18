@@ -2,7 +2,6 @@ kind: pipeline
 type: docker
 name: deploy
 
-# Roda no runner local do wir-hub (192.168.0.159)
 node:
   location: wir-hub
 
@@ -22,11 +21,14 @@ steps:
         path: /opt/infra/apps
       - name: site
         path: /opt/infra/infra/sites/tabularium-site
-      - name: ssh
-        path: /root/.ssh
+      - name: hostssh
+        path: /mnt/hostssh
     commands:
       - apk add --no-cache git openssh-client
       - mkdir -p /root/.ssh && chmod 700 /root/.ssh
+      - cp /mnt/hostssh/id_ed25519_tabularium /root/.ssh/
+      - cp /mnt/hostssh/config /root/.ssh/
+      - chmod 600 /root/.ssh/id_ed25519_tabularium /root/.ssh/config
       - ssh-keyscan -t rsa github.com >> /root/.ssh/known_hosts 2>/dev/null
       - git config --global --add safe.directory /opt/infra/apps/tabularium
       - cd /opt/infra/apps/tabularium && git pull origin main
@@ -43,6 +45,6 @@ volumes:
   - name: site
     host:
       path: /opt/infra/infra/sites/tabularium-site
-  - name: ssh
+  - name: hostssh
     host:
       path: /home/accept/.ssh
