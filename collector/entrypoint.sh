@@ -2,7 +2,7 @@
 set -e
 
 # Tabularium Collector — Entrypoint
-# Aplica DNS customizado antes de iniciar o collector
+# Aplica DNS customizado preservando o DNS interno do Docker
 
 echo "[entrypoint] Tabularium Collector iniciando..."
 
@@ -20,9 +20,11 @@ if [ -n "$DNS_SERVERS" ]; then
         if [ -n "$DNS_SEARCH" ]; then
             echo "search $DNS_SEARCH"
         fi
+        echo "nameserver 127.0.0.11"
         for ip in $(echo "$DNS_SERVERS" | tr ',' ' '); do
             echo "nameserver $ip"
         done
+        echo "options edns0 trust-ad ndots:0"
     } > /etc/resolv.conf
 
     echo "[entrypoint] /etc/resolv.conf atualizado"

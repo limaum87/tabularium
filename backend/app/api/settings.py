@@ -192,9 +192,15 @@ def apply_dns(body: DnsApplyInput, _=Depends(require_role("admin"))):
     if search:
         lines.append(f"search {search}")
 
-    # Adiciona os nameservers
+    # Preserva DNS interno do Docker (resolve nomes de containers)
+    lines.append("nameserver 127.0.0.11")
+
+    # Adiciona DNS customizado da rede
     for ip in dns_ips:
         lines.append(f"nameserver {ip}")
+
+    # Options do Docker
+    lines.append("options edns0 trust-ad ndots:0")
 
     try:
         # Se for symlink para arquivo read-only, remove e recria como arquivo normal

@@ -38,9 +38,8 @@ def _seed_admin():
 
 
 def _apply_dns_from_db():
-    """Lê DNS das settings do banco e aplica no /etc/resolv.conf."""
-    import re as re_mod
-
+    """Lê DNS das settings do banco e aplica no /etc/resolv.conf.
+    Preserva o DNS interno do Docker (127.0.0.11) para resolução de containers."""
     db = SessionLocal()
     try:
         from app.core.database import Setting
@@ -57,11 +56,20 @@ def _apply_dns_from_db():
 
         search = search_domain.value.strip() if search_domain and search_domain.value else ""
 
+        # Monta resolv.conf: preserva Docker DNS + adiciona DNS customizado
         lines = []
         if search:
             lines.append(f"search {search}")
+
+        # Mantém DNS interno do Docker (resolver de containers)
+        lines.append("nameserver 127.0.0.11")
+
+        # Adiciona DNS customizado da rede
         for ip in dns_ips:
             lines.append(f"nameserver {ip}")
+
+        # Adiciona options do Docker
+        lines.append("options edns0 trust-ad ndots:0")
 
         resolv_path = "/etc/resolv.conf"
 
@@ -73,7 +81,7 @@ def _apply_dns_from_db():
             with open(resolv_path, "w") as f:
                 f.write("\n".join(lines) + "\n")
 
-            print(f"[dns] DNS aplicado do banco: {', '.join(dns_ips)}" + (f" | search: {search}" if search else ""))
+            print(f"[dns] DNS aplicado do banco (preservando Docker DNS): {', '.join(dns_ips)}" + (f" | search: {search}" if search else ""))
         except PermissionError:
             print("[dns] Sem permissão para escrever /etc/resolv.conf")
         except Exception as e:
