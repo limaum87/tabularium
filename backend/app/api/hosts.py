@@ -313,6 +313,10 @@ def action_ping(host_id: int, db: Session = Depends(get_db), _=Depends(get_curre
             msg = f"{hostname} respondeu ao ping" + (f" ({avg_ms:.0f}ms)" if avg_ms else "")
             if resolved_ip:
                 msg += f" [IP: {resolved_ip}]"
+            # Atualiza ping_status
+            host.ping_status = "online"
+            host.last_ping = datetime.utcnow()
+            db.commit()
             return {
                 "success": True,
                 "message": msg,
@@ -330,6 +334,9 @@ def action_ping(host_id: int, db: Session = Depends(get_db), _=Depends(get_curre
                 "debug": debug,
             }
     except subprocess.TimeoutExpired:
+        host.ping_status = "offline"
+        host.last_ping = datetime.utcnow()
+        db.commit()
         return {"success": False, "message": f"Timeout ao pingar {hostname}", "hostname": hostname, "resolved_ip": resolved_ip, "debug": debug}
     except Exception as e:
         return {"success": False, "message": f"Erro: {str(e)[:200]}", "hostname": hostname, "resolved_ip": resolved_ip, "debug": debug}
@@ -376,12 +383,20 @@ def action_test_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get
         )
         result = session.run_ps("Write-Output 'OK'")
         stdout = result.std_out.decode("utf-8", errors="replace").strip()
+        # Atualiza status e last_seen
+        host.status = "online"
+        host.last_seen = datetime.utcnow()
+        db.commit()
         return {
             "success": True,
             "message": f"WinRM OK — resposta: {stdout}",
             "hostname": host.hostname,
         }
     except Exception as e:
+        # Atualiza status se falhou
+        host.status = "offline"
+        host.updated_at = datetime.utcnow()
+        db.commit()
         return {
             "success": False,
             "message": f"Falha WinRM: {str(e)[:200]}",
@@ -559,6 +574,9 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
         ]
 
         if result.returncode == 0 or "completed successfully" in output.lower() or "[+]" in output:
+            host.status = "online"
+            host.last_seen = datetime.utcnow()
+            db.commit()
             return {
                 "success": True,
                 "message": f"WinRM ativado remotamente em {host.hostname}. Use 'Testar WinRM' para confirmar.",

@@ -247,7 +247,7 @@
                                     <th>Domínio</th>
                                     <th>Ping</th>
                                     <th>WinRM</th>
-                                    <th>Último Contato</th>
+                                    <th>Última Coleta</th>
                                     <th></th>
                                     <th></th>
                                 </tr>
@@ -275,7 +275,6 @@
                     const statusBadge = h.status === 'online' ? 'badge-success' : h.status === 'offline' ? 'badge-danger' : 'badge-muted';
                     const pingBadge = h.ping_status === 'online' ? 'badge-success' : h.ping_status === 'offline' ? 'badge-danger' : 'badge-muted';
                     const dt = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
-                    const pingDt = h.last_ping ? new Date(h.last_ping).toLocaleString('pt-BR') : '—';
                     tbody.innerHTML += `<tr id="row-${h.id}">
                         <td class="mono">${h.hostname}</td>
                         <td>${h.domain || '—'}</td>
