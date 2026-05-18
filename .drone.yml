@@ -32,7 +32,7 @@ steps:
       - ssh-keyscan -t rsa github.com >> /root/.ssh/known_hosts 2>/dev/null
       - git config --global --add safe.directory /opt/infra/apps/tabularium
       - cd /opt/infra/apps/tabularium && git pull origin main
-      - cd /opt/infra/infra/sites/tabularium-site && docker compose pull && docker compose up -d --build
+      - cd /opt/infra/infra/sites/tabularium-site && docker compose up -d --build --pull always
       - docker image prune -f
 
 volumes:
