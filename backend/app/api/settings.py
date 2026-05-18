@@ -39,6 +39,10 @@ class WinrmTestInput(BaseModel):
     port: int = 5985
 
 
+class DnsApplyInput(BaseModel):
+    dns_servers: str  # IPs separados por vírgula, ex: "10.0.0.1,10.0.0.2"
+
+
 # ---- CRUD ----
 
 @router.get("")
@@ -165,4 +169,65 @@ def test_winrm(body: WinrmTestInput, _=Depends(require_role("admin"))):
             "success": False,
             "message": f"Falha WinRM: {str(e)[:200]}",
             "hostname": body.hostname,
+        }
+
+
+@router.post("/apply-dns")
+def apply_dns(body: DnsApplyInput, _=Depends(require_role("admin"))):
+    """Aplica DNS customizado no /etc/resolv.conf do container."""
+    import os
+
+    dns_ips = [ip.strip() for ip in body.dns_servers.split(",") if ip.strip()]
+    if not dns_ips:
+        return {"success": False, "message": "Nenhum DNS válido informado"}
+
+    # Valida formato IP básico
+    import re
+    ip_pattern = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,}$")
+    for ip in dns_ips:
+        if not ip_pattern.match(ip):
+            return {"success": False, "message": f"IP inválido: {ip}"}
+
+    resolv_path = "/etc/resolv.conf"
+
+    # Monta o conteúdo do resolv.conf
+    lines = []
+    # Preserva search/domain se existir
+    try:
+        with open(resolv_path, "r") as f:
+            for line in f:
+                if line.strip().startswith("search ") or line.strip().startswith("domain "):
+                    lines.append(line.rstrip())
+    except FileNotFoundError:
+        pass
+
+    # Adiciona os nameservers
+    for ip in dns_ips:
+        lines.append(f"nameserver {ip}")
+
+    try:
+        # Em containers, /etc/resolv.conf pode ser um symlink. Resolve isso.
+        real_path = os.path.realpath(resolv_path)
+
+        # Se for symlink para um arquivo read-only (ex: /proc/net/pnp), remove e recria
+        if os.path.islink(resolv_path):
+            os.unlink(resolv_path)
+
+        with open(resolv_path, "w") as f:
+            f.write("\n".join(lines) + "\n")
+
+        return {
+            "success": True,
+            "message": f"DNS aplicado: {', '.join(dns_ips)}",
+            "dns_servers": dns_ips,
+        }
+    except PermissionError:
+        return {
+            "success": False,
+            "message": "Sem permissão para escrever /etc/resolv.conf. Execute o container como root.",
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Erro ao aplicar DNS: {str(e)[:200]}",
         }

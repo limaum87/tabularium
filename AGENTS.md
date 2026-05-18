@@ -5,7 +5,7 @@
 Você DEVE se identificar com um nome de agente fixo.
 
 Defina internamente:
-Agent name: <CLAUDE | CODEX | GEMINI | GLM>
+Agent name: Gohan
 
 Esse nome DEVE ser utilizado em todas as notificações.
 
@@ -68,7 +68,7 @@ STATUS:
 - [AGUARDANDO]
 
 AGENTE:
-- nome do agente atual (CLAUDE, CODEX, GEMINI, GLM)
+- nome do agente atual (Gohan)
 
 nome-da-tarefa:
 - identificador curto da tarefa

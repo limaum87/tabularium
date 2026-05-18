@@ -103,6 +103,30 @@
                     </div>
                 </div>
 
+                <!-- DNS -->
+                <div class="panel animate-in" style="margin-bottom:20px;">
+                    <div class="panel-header">
+                        <span class="panel-title">DNS (Resolução de Nomes)</span>
+                        <button class="btn-primary-accent" onclick="saveAndApplyDns()" id="btn-dns-apply" style="padding:8px 18px;font-size:12px;">Salvar & Aplicar</button>
+                    </div>
+                    <div class="panel-body" style="padding:24px;">
+                        <div id="dns-alert"></div>
+                        <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">
+                            Configure o servidor DNS da sua rede corporativa para que os containers consigam resolver nomes como <code style="font-family:var(--font-mono);font-size:11px;background:var(--accent-dim);padding:1px 4px;border-radius:3px;">wir-adm-01</code>. Use o IP do controlador de domínio AD. Para mais de um DNS, separe por vírgula.
+                        </p>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                            <div>
+                                <label class="form-label-dark">Servidor DNS</label>
+                                <input type="text" class="form-control-dark" id="dns-servers" placeholder="10.0.0.1 ou 10.0.0.1,10.0.0.2">
+                            </div>
+                            <div style="display:flex;align-items:flex-end;">
+                                <div id="dns-status" style="font-size:12px;padding-bottom:8px;"></div>
+                            </div>
+                        </div>
+                        <div id="dns-result" style="margin-top:16px;display:none;"></div>
+                    </div>
+                </div>
+
                 <!-- Agendamento -->
                 <div class="panel animate-in animate-in-delay-2" style="margin-bottom:20px;">
                     <div class="panel-header">
@@ -155,6 +179,17 @@
                 }
                 if (data.ping) {
                     if (data.ping.timeout) document.getElementById('ping-timeout').value = data.ping.timeout;
+                }
+
+                // DNS
+                if (data.dns) {
+                    if (data.dns.servers) document.getElementById('dns-servers').value = data.dns.servers;
+                    const statusEl = document.getElementById('dns-status');
+                    if (data.dns.servers) {
+                        statusEl.innerHTML = '<span style="color:var(--success);">✓ DNS configurado</span>';
+                    } else {
+                        statusEl.innerHTML = '<span style="color:var(--warning, #f59e0b);">⚠ Nenhum DNS configurado</span>';
+                    }
                 }
             }
         }
@@ -276,6 +311,46 @@
 
             btn.disabled = false;
             btn.textContent = 'Salvar & Testar';
+        }
+
+        async function saveAndApplyDns() {
+            const btn = document.getElementById('btn-dns-apply');
+            btn.disabled = true;
+            btn.textContent = 'Aplicando...';
+
+            const dnsServers = document.getElementById('dns-servers').value.trim();
+
+            // Salvar no banco
+            await saveSettingsBatch([
+                { key: 'servers', value: dnsServers, category: 'dns' },
+            ]);
+
+            if (!dnsServers) {
+                alertBox('dns-result', true, '✓ Configuração de DNS removida. Reinicie o container para voltar ao DNS padrão.');
+                document.getElementById('dns-status').innerHTML = '<span style="color:var(--warning, #f59e0b);">⚠ Nenhum DNS configurado</span>';
+                btn.disabled = false;
+                btn.textContent = 'Salvar & Aplicar';
+                return;
+            }
+
+            // Aplicar no container em runtime
+            const res = await apiFetch('/api/settings/apply-dns', {
+                method: 'POST',
+                body: { dns_servers: dnsServers },
+            });
+
+            if (res) {
+                const data = await res.json();
+                if (data.success) {
+                    alertBox('dns-result', true, `✓ ${data.message}. O DNS já está ativo neste container. Para o collector, reinicie com DNS_SERVERS=${dnsServers} no .env.`);
+                    document.getElementById('dns-status').innerHTML = '<span style="color:var(--success);">✓ DNS ativo</span>';
+                } else {
+                    alertBox('dns-result', false, `✗ ${data.message}`);
+                }
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Salvar & Aplicar';
         }
 
         async function saveSchedule() {

@@ -42,6 +42,7 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       COLLECTOR_API_TOKEN: ${COLLECTOR_API_TOKEN}
+      DNS_SERVERS: ${DNS_SERVERS:-}
     depends_on:
       mysql:
         condition: service_healthy
@@ -73,6 +74,7 @@ services:
     environment:
       COLLECTOR_API_URL: http://backend:8000
       COLLECTOR_API_TOKEN: ${COLLECTOR_API_TOKEN}
+      DNS_SERVERS: ${DNS_SERVERS:-}
     depends_on:
       - backend
     networks:
