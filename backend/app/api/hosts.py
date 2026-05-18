@@ -340,9 +340,9 @@ def action_test_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get
 
 @router.post("/{host_id}/action/enable-winrm")
 def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """Tenta ativar WinRM remotamente via impacket-psexec.
+    """Tenta ativar WinRM remotamente via impacket.
 
-    Executa remotamente:
+    Executa remotamente via WMI/SMB:
       1. Enable-PSRemoting -Force
       2. Configura TrustedHosts = *
       3. Habilita autenticação Basic e NTLM
@@ -366,6 +366,8 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
 
     import subprocess
     import sys
+    import shutil
+    import os
 
     # Parse domínio/usuário
     raw_user = winrm_user.value
@@ -383,11 +385,12 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
 
     # Script PowerShell para habilitar WinRM
     ps_script = (
-        "Enable-PSRemoting -Force; "
+        "powershell.exe -ExecutionPolicy Bypass -Command "
+        "\"Enable-PSRemoting -Force; "
         "Set-Item WSMan:\\localhost\\Client\\TrustedHosts -Value '*' -Force; "
         "Set-Item WSMan:\\localhost\\Service\\Auth\\Basic -Value $true -Force; "
         "Set-Item WSMan:\\localhost\\Service\\Auth\\Negotiate -Value $true -Force; "
-        "winrm set winrm/config/service '@{AllowUnencrypted=\"true\"}'"
+        "winrm set winrm/config/service '@{AllowUnencrypted=\"true\"}'\""
     )
 
     # Monta credencial no formato impacket: domain/user:password@host
@@ -396,28 +399,84 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
     else:
         creds = f"{user}:{password}@{host.hostname}"
 
+    # Encontra o script psexec do impacket
+    psexec_cmd = None
+
+    # 1. Tenta console scripts instalados pelo pip
+    for name in ["psexec.py", "impacket-psexec", "psexec"]:
+        found = shutil.which(name)
+        if found:
+            psexec_cmd = [found, creds, ps_script]
+            break
+
+    # 2. Tenta encontrar no pacote impacket
+    if not psexec_cmd:
+        try:
+            import impacket
+            pkg_path = os.path.dirname(impacket.__file__)
+            for candidate in [
+                os.path.join(pkg_path, "examples", "psexec.py"),
+                os.path.join(pkg_path, "scripts", "psexec.py"),
+            ]:
+                if os.path.isfile(candidate):
+                    psexec_cmd = [sys.executable, candidate, creds, ps_script]
+                    break
+        except Exception:
+            pass
+
+    # 3. Fallback: tenta via wmiexec (mais disponível)
+    if not psexec_cmd:
+        for name in ["wmiexec.py", "impacket-wmiexec", "wmiexec"]:
+            found = shutil.which(name)
+            if found:
+                psexec_cmd = [found, creds, ps_script]
+                break
+
+    # 4. Último fallback: smbexec
+    if not psexec_cmd:
+        for name in ["smbexec.py", "impacket-smbexec", "smbexec"]:
+            found = shutil.which(name)
+            if found:
+                psexec_cmd = [found, creds, ps_script]
+                break
+
+    if not psexec_cmd:
+        return {
+            "success": False,
+            "message": "Não encontrou psexec/wmiexec/smbexec do impacket. Verifique a instalação.",
+            "hostname": host.hostname,
+        }
+
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "impacket.examples.psexec", creds, ps_script],
+            psexec_cmd,
             capture_output=True, text=True, timeout=90
         )
 
         output = (result.stdout or "") + (result.stderr or "")
+
+        # Debug info
+        debug = [
+            f"Comando: {' '.join(psexec_cmd[:2])} [creds] [script]",
+            f"Exit code: {result.returncode}",
+        ]
 
         if result.returncode == 0 or "completed successfully" in output.lower() or "[+]" in output:
             return {
                 "success": True,
                 "message": f"WinRM ativado remotamente em {host.hostname}. Use 'Testar WinRM' para confirmar.",
                 "hostname": host.hostname,
+                "debug": debug,
             }
         else:
-            # Tenta extrair erro útil do output
-            err_lines = output.strip().split("\n")[-5:]
+            err_lines = output.strip().split("\n")[-8:]
             err = " | ".join(line.strip() for line in err_lines if line.strip())
+            debug.append(f"Output: {err[:300]}")
             return {
                 "success": False,
                 "message": f"Falha ao ativar WinRM: {err[:300]}",
                 "hostname": host.hostname,
+                "debug": debug,
             }
     except subprocess.TimeoutExpired:
         return {"success": False, "message": f"Timeout (90s) ao ativar WinRM em {host.hostname}", "hostname": host.hostname}
