@@ -388,14 +388,22 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
     password = winrm_pass.value
     domain = ""
     user = raw_user
-    if "\\\\" in user:
-        parts = user.split("\\\\", 1)
+    # Aceita tanto \ quanto \\ como separador
+    if "\\" in user:
+        parts = user.split("\\", 1)
+        domain = parts[0]
+        user = parts[1]
+    elif "/" in user:
+        parts = user.split("/", 1)
         domain = parts[0]
         user = parts[1]
     elif "@" in user:
         parts = user.split("@", 1)
         user = parts[0]
         domain = parts[1]
+
+    # Debug de credenciais (sem mostrar senha)
+    debug_creds = f"domain={domain}, user={user}, host={target_host}"
 
     # Script PowerShell para habilitar WinRM
     ps_script = (
@@ -471,6 +479,7 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
 
         # Debug info
         debug = [
+            f"Credenciais: {debug_creds}",
             f"Comando: {' '.join(psexec_cmd[:2])} [creds] [script]",
             f"Exit code: {result.returncode}",
         ]
