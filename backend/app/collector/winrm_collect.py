@@ -271,29 +271,49 @@ def _ps_anydesk():
 $ErrorActionPreference = "SilentlyContinue"
 $r = @{}
 $adId = $null
-foreach ($p in "HKLM:\SOFTWARE\AnyDesk","HKLM:\SOFTWARE\WOW6432Node\AnyDesk") {
-    try { $v = (Get-ItemProperty $p -EA Stop).ClientID; if ($v) { $adId = $v; break } } catch {}
+# 1. ProgramData (instalacao global)
+foreach ($f in 'C:\ProgramData\AnyDesk\system.conf') {
+    try {
+        $m = Select-String 'ad\.anynet\.id\s*=\s*(\d+)' $f -EA Stop
+        if ($m) { $adId = $m.Matches.Groups[1].Value; break }
+    } catch {}
 }
+# 2. Per-user (ultimo usuario logado)
 if (-not $adId) {
-    foreach ($f in "C:\ProgramData\AnyDesk\system.conf","C:\ProgramData\AnyDesk\service.conf") {
-        try {
-            $c = Get-Content $f -EA Stop
-            $m = $c | Where-Object { $_ -match "ad\.anynet\.id\s*=\s*\"?(\d+)" }
-            if ($m -and $Matches[1]) { $adId = $Matches[1]; break }
-        } catch {}
+    foreach ($d in Get-ChildItem 'C:\Users' -Directory -EA 0) {
+        $f = Join-Path $d.FullName 'AppData\Roaming\AnyDesk\system.conf'
+        if (Test-Path $f) {
+            try {
+                $m = Select-String 'ad\.anynet\.id\s*=\s*(\d+)' $f -EA Stop
+                if ($m) { $adId = $m.Matches.Groups[1].Value; break }
+            } catch {}
+        }
     }
 }
-$r.anydesk_id = if ($adId) { [string]$adId } else { $null }
+$r.anydesk_id = if ($adId) { $adId } else { $null }
+# Alias
 $alias = $null
-foreach ($p in "HKLM:\SOFTWARE\AnyDesk","HKLM:\SOFTWARE\WOW6432Node\AnyDesk") {
+foreach ($p in 'HKLM:\SOFTWARE\AnyDesk','HKLM:\SOFTWARE\WOW6432Node\AnyDesk') {
     try { $a = (Get-ItemProperty $p -EA Stop).Alias; if ($a) { $alias = $a; break } } catch {}
 }
-$r.anydesk_alias = if ($alias) { $alias } else { "" }
-$adv = $null
-foreach ($p in "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*") {
-    try { $i = Get-ItemProperty $p -EA SilentlyContinue | ? { $_.DisplayName -like "*AnyDesk*" } | Select -First 1; if ($i) { $adv = $i.DisplayVersion; break } } catch {}
+if (-not $alias) {
+    foreach ($d in Get-ChildItem 'C:\Users' -Directory -EA 0) {
+        $f = Join-Path $d.FullName 'AppData\Roaming\AnyDesk\user.conf'
+        if (Test-Path $f) {
+            try {
+                $m = Select-String 'ad\.anynet\.alias\s*=\s*(.+)' $f -EA Stop
+                if ($m) { $alias = $m.Matches.Groups[1].Value.Trim(); break }
+            } catch {}
+        }
+    }
 }
-$r.anydesk_version = if ($adv) { $adv } else { "" }
+$r.anydesk_alias = if ($alias) { $alias } else { '' }
+# Versao
+$adv = $null
+foreach ($p in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*') {
+    try { $i = Get-ItemProperty $p -EA 0 | ? { $_.DisplayName -like '*AnyDesk*' } | Select -First 1; if ($i) { $adv = $i.DisplayVersion; break } } catch {}
+}
+$r.anydesk_version = if ($adv) { $adv } else { '' }
 $r | ConvertTo-Json -Compress
 """
 
