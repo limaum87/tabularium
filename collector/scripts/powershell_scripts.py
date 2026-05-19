@@ -75,7 +75,7 @@ try {
         version             = if ($os.Version -match "^10\.0\.(\d+)") { $matches[1] } else { $os.Version }
         build               = $os.BuildNumber
         license_channel     = if ($lic) { $lic.ProductKeyChannel } else { "" }
-        license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+        license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } 2 { "OOBGrace" } 3 { "OOTGrace" } 4 { "NonGenuine" } 5 { "Notification" } 6 { "ExtendedGrace" } default { "Unknown ($($lic.LicenseStatus))" } }
         partial_product_key = if ($lic) { $lic.PartialProductKey } else { "" }
         oem_key_found       = [bool]$oem
     }
