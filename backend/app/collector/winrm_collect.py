@@ -266,106 +266,52 @@ $items | Sort-Object DisplayName -Unique | ForEach-Object {
 """
 
 
-def _ps_remote_access():
+def _ps_anydesk():
     return r"""
 $ErrorActionPreference = "SilentlyContinue"
-$obj = @{ anydesk_id = $null; anydesk_alias = ""; anydesk_version = ""; ultravnc_installed = $false; ultravnc_port = $null; ultravnc_version = ""; teamviewer_id = $null }
-
-# ---- AnyDesk ----
-# Tenta pegar ID do registry (instalação como serviço)
+$r = @{}
 $adId = $null
-$adPaths = @(
-    "HKLM:\SOFTWARE\AnyDesk",
-    "HKLM:\SOFTWARE\WOW6432Node\AnyDesk"
-)
-foreach ($p in $adPaths) {
-    try {
-        $val = (Get-ItemProperty $p -ErrorAction Stop).ClientID
-        if ($val) { $adId = $val; break }
-    } catch {}
+foreach ($p in "HKLM:\SOFTWARE\AnyDesk","HKLM:\SOFTWARE\WOW6432Node\AnyDesk") {
+    try { $v = (Get-ItemProperty $p -EA Stop).ClientID; if ($v) { $adId = $v; break } } catch {}
 }
-# Fallback: arquivo de config do serviço
 if (-not $adId) {
-    $confFiles = @(
-        "C:\ProgramData\AnyDesk\system.conf",
-        "C:\ProgramData\AnyDesk\service.conf"
-    )
-    foreach ($f in $confFiles) {
+    foreach ($f in "C:\ProgramData\AnyDesk\system.conf","C:\ProgramData\AnyDesk\service.conf") {
         try {
-            $content = Get-Content $f -ErrorAction Stop
-            $idLine = $content | Where-Object { $_ -match "ad\.anynet\.id\s*=\s*\"?(\d+)" }
-            if ($idLine -and $Matches[1]) {
-                $adId = $Matches[1]
-                break
-            }
+            $c = Get-Content $f -EA Stop
+            $m = $c | Where-Object { $_ -match "ad\.anynet\.id\s*=\s*\"?(\d+)" }
+            if ($m -and $Matches[1]) { $adId = $Matches[1]; break }
         } catch {}
     }
 }
-if ($adId) {
-    $obj.anydesk_id = [string]$adId
+$r.anydesk_id = if ($adId) { [string]$adId } else { $null }
+$alias = $null
+foreach ($p in "HKLM:\SOFTWARE\AnyDesk","HKLM:\SOFTWARE\WOW6432Node\AnyDesk") {
+    try { $a = (Get-ItemProperty $p -EA Stop).Alias; if ($a) { $alias = $a; break } } catch {}
 }
-# Alias do AnyDesk (user-friendly name)
-foreach ($p in $adPaths) {
-    try {
-        $alias = (Get-ItemProperty $p -ErrorAction Stop).Alias
-        if ($alias) { $obj.anydesk_alias = $alias; break }
-    } catch {}
+$r.anydesk_alias = if ($alias) { $alias } else { "" }
+$adv = $null
+foreach ($p in "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*") {
+    try { $i = Get-ItemProperty $p -EA SilentlyContinue | ? { $_.DisplayName -like "*AnyDesk*" } | Select -First 1; if ($i) { $adv = $i.DisplayVersion; break } } catch {}
 }
-# Versão do AnyDesk
-try {
-    $adUninst = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -like "*AnyDesk*" } | Select-Object -First 1
-    if (-not $adUninst) {
-        $adUninst = Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -like "*AnyDesk*" } | Select-Object -First 1
-    }
-    if ($adUninst) {
-        $obj.anydesk_version = $adUninst.DisplayVersion
-        if (-not $obj.anydesk_id) {
-            # Tenta pegar ID do diretório do usuário que instalou
-            $installLoc = $adUninst.InstallLocation
-            if (-not $installLoc) { $installLoc = "C:\Program Files (x86)\AnyDesk" }
-            $userConf = Get-ChildItem "$installLoc\..\..\..\..\AppData\Roaming\AnyDesk" -ErrorAction SilentlyContinue |
-                Where-Object { $_.Extension -eq ".conf" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        }
-    }
-} catch {}
+$r.anydesk_version = if ($adv) { $adv } else { "" }
+$r | ConvertTo-Json -Compress
+"""
 
-# ---- UltraVNC ----
-$uvncPaths = @(
-    "HKLM:\SOFTWARE\UltraVNC",
-    "HKLM:\SOFTWARE\WOW6432Node\UltraVNC"
-)
-foreach ($p in $uvncPaths) {
-    try {
-        $uvnc = Get-ItemProperty "$p\server" -ErrorAction Stop
-        if ($uvnc) {
-            $obj.ultravnc_installed = $true
-            $port = $uvnc.PortNumber
-            if ($port) { $obj.ultravnc_port = [int]$port }
-            # Versão
-            $uvncParent = Get-ItemProperty $p -ErrorAction SilentlyContinue
-            if ($uvncParent -and $uvncParent.Version) { $obj.ultravnc_version = $uvncParent.Version }
-            break
-        }
-    } catch {}
+
+def _ps_ultravnc():
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+$r = @{ installed = $false; port = $null; version = "" }
+foreach ($p in "HKLM:\SOFTWARE\UltraVNC\server","HKLM:\SOFTWARE\WOW6432Node\UltraVNC\server") {
+    try { $v = Get-ItemProperty $p -EA Stop; if ($v) { $r.installed = $true; if ($v.PortNumber) { $r.port = [int]$v.PortNumber }; break } } catch {}
 }
-# Checa se o serviço do UltraVNC está rodando
-if (-not $obj.ultravnc_installed) {
-    $svc = Get-Service -Name "uvnc_service" -ErrorAction SilentlyContinue
-    if ($svc) {
-        $obj.ultravnc_installed = $true
-        $obj.ultravnc_port = 5900
+if (-not $r.installed) { try { $s = Get-Service uvnc_service -EA Stop; if ($s) { $r.installed = $true; $r.port = 5900 } } catch {} }
+if ($r.installed -and -not $r.version) {
+    foreach ($p in "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*","HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*") {
+        try { $i = Get-ItemProperty $p -EA SilentlyContinue | ? { $_.DisplayName -like "*UltraVNC*" } | Select -First 1; if ($i) { $r.version = $i.DisplayVersion; break } } catch {}
     }
 }
-# Versão pelo uninstall registry
-if ($obj.ultravnc_installed -and -not $obj.ultravnc_version) {
-    $uvncUninst = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -like "*UltraVNC*" } | Select-Object -First 1
-    if ($uvncUninst) { $obj.ultravnc_version = $uvncUninst.DisplayVersion }
-}
-
-$obj | ConvertTo-Json -Compress
+$r | ConvertTo-Json -Compress
 """
 
 

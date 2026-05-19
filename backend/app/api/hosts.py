@@ -248,7 +248,7 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
     from app.collector.winrm_collect import (
         _ps_hardware, _ps_disks, _ps_network,
         _ps_windows_license, _ps_office_license, _ps_software,
-        _ps_remote_access,
+        _ps_anydesk, _ps_ultravnc,
     )
 
     host = db.query(Host).filter(Host.id == host_id).first()
@@ -409,38 +409,54 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
             yield sse({"type": "step_fail", "step": "software", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 
-        # ---- ACESSO REMOTO (AnyDesk, UltraVNC) ----
+        # ---- ACESSO REMOTO (AnyDesk + UltraVNC separados) ----
         yield sse({"type": "step", "step": "remote_access", "message": "🖥️ Coletando acesso remoto..."})
         try:
-            raw = _run_ps(session, _ps_remote_access())
-            ra = _safe_json(raw, "remote_access")
-            if ra:
-                existing = db.query(HostRemoteAccess).filter(HostRemoteAccess.host_id == host_id_val).first()
-                ra_data = {
-                    "anydesk_id": ra.get("anydesk_id"),
-                    "anydesk_alias": ra.get("anydesk_alias"),
-                    "anydesk_version": ra.get("anydesk_version"),
-                    "ultravnc_installed": ra.get("ultravnc_installed"),
-                    "ultravnc_port": ra.get("ultravnc_port"),
-                    "ultravnc_version": ra.get("ultravnc_version"),
-                    "updated_at": now,
-                }
-                if existing:
-                    for k, v in ra_data.items():
-                        setattr(existing, k, v)
-                else:
-                    db.add(HostRemoteAccess(host_id=host_id_val, **ra_data))
-                db.commit()
-                parts = []
-                if ra.get("anydesk_id"):
-                    parts.append(f"AnyDesk: {ra['anydesk_id']}")
-                if ra.get("ultravnc_installed"):
-                    port = ra.get("ultravnc_port", 5900)
-                    parts.append(f"UltraVNC: :{port}")
-                msg = " | ".join(parts) if parts else "Nenhum encontrado"
-                yield sse({"type": "step_ok", "step": "remote_access", "message": f"✓ {msg}"})
+            ra_data = {
+                "anydesk_id": None, "anydesk_alias": "", "anydesk_version": "",
+                "ultravnc_installed": False, "ultravnc_port": None, "ultravnc_version": "",
+                "updated_at": now,
+            }
+            # AnyDesk (script separado)
+            try:
+                raw = _run_ps(session, _ps_anydesk())
+                ad = _safe_json(raw, "anydesk")
+                if ad:
+                    ra_data["anydesk_id"] = ad.get("anydesk_id")
+                    ra_data["anydesk_alias"] = ad.get("anydesk_alias", "")
+                    ra_data["anydesk_version"] = ad.get("anydesk_version", "")
+                yield sse({"type": "step_progress", "step": "remote_access", "message": f"  AnyDesk: {ad.get('anydesk_id', 'não encontrado') if ad else 'não encontrado'}"})
+            except Exception as e:
+                yield sse({"type": "step_progress", "step": "remote_access", "message": f"  AnyDesk: falha — {str(e)[:60]}"})
+
+            # UltraVNC (script separado)
+            try:
+                raw = _run_ps(session, _ps_ultravnc())
+                uv = _safe_json(raw, "ultravnc")
+                if uv:
+                    ra_data["ultravnc_installed"] = uv.get("installed", False)
+                    ra_data["ultravnc_port"] = uv.get("port")
+                    ra_data["ultravnc_version"] = uv.get("version", "")
+                yield sse({"type": "step_progress", "step": "remote_access", "message": f"  UltraVNC: {'instalado' if uv and uv.get('installed') else 'não encontrado'}"})
+            except Exception as e:
+                yield sse({"type": "step_progress", "step": "remote_access", "message": f"  UltraVNC: falha — {str(e)[:60]}"})
+
+            # Salva no banco
+            existing = db.query(HostRemoteAccess).filter(HostRemoteAccess.host_id == host_id_val).first()
+            if existing:
+                for k, v in ra_data.items():
+                    setattr(existing, k, v)
             else:
-                yield sse({"type": "step_ok", "step": "remote_access", "message": "⚠ Sem dados de acesso remoto"})
+                db.add(HostRemoteAccess(host_id=host_id_val, **ra_data))
+            db.commit()
+
+            parts = []
+            if ra_data["anydesk_id"]:
+                parts.append(f"AnyDesk: {ra_data['anydesk_id']}")
+            if ra_data["ultravnc_installed"]:
+                parts.append(f"UltraVNC: :{ra_data['ultravnc_port'] or 5900}")
+            msg = " | ".join(parts) if parts else "Nenhum encontrado"
+            yield sse({"type": "step_ok", "step": "remote_access", "message": f"✓ {msg}"})
             total_success += 1
         except Exception as e:
             yield sse({"type": "step_fail", "step": "remote_access", "message": f"✗ Falha: {str(e)[:100]}"})
