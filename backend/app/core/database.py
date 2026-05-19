@@ -64,6 +64,7 @@ class HostHardware(Base):
     ram_gb = Column(Float, nullable=True)
     bios_version = Column(String(255), nullable=True)
     last_boot = Column(DateTime, nullable=True)
+    last_user = Column(String(255), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

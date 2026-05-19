@@ -77,6 +77,7 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
             "ram_gb": hw.ram_gb,
             "bios_version": hw.bios_version,
             "last_boot": hw.last_boot,
+            "last_user": hw.last_user,
             "updated_at": now,
         }
         if existing:
@@ -311,6 +312,7 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
                     "ram_gb": hw.get("ram_gb"),
                     "bios_version": hw.get("bios_version"),
                     "last_boot": hw.get("last_boot"),
+                    "last_user": hw.get("last_user"),
                     "updated_at": now,
                 }
                 if existing:

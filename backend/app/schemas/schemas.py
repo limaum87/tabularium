@@ -87,6 +87,7 @@ class HardwarePayload(BaseModel):
     ram_gb: Optional[float] = None
     bios_version: Optional[str] = None
     last_boot: Optional[str] = None
+    last_user: Optional[str] = None
 
 
 class DiskPayload(BaseModel):

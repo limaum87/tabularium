@@ -74,5 +74,19 @@ if 'host_remote_access' not in tables:
 print('[migration] Tudo ok')
 " || echo "[migration] Aviso: não conseguiu verificar/criar migrações"
 
+# Auto-migrate: coluna last_user em host_hardware
+python -c "
+from app.core.database import engine
+import sqlalchemy
+insp = sqlalchemy.inspect(engine)
+cols = [c['name'] for c in insp.get_columns('host_hardware')]
+if 'last_user' not in cols:
+    print('[migration] Adicionando coluna last_user em host_hardware...')
+    with engine.connect() as conn:
+        conn.execute(sqlalchemy.text('ALTER TABLE host_hardware ADD COLUMN last_user VARCHAR(255) DEFAULT NULL AFTER last_boot'))
+        conn.commit()
+    print('[migration] OK')
+" || echo "[migration] Aviso: não conseguiu verificar/criar last_user"
+
 echo "[entrypoint] Iniciando uvicorn..."
 exec "$@"

@@ -121,6 +121,7 @@ $obj = @{
     ram_gb       = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
     bios_version = (Get-CimInstance Win32_BIOS).SMBIOSBIOSVersion
     last_boot    = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToString("yyyy-MM-dd HH:mm:ss")
+    last_user    = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\LogonUI' -EA 0).LastLoggedOnUser
 }
 $obj | ConvertTo-Json -Compress
 """
