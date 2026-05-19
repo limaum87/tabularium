@@ -104,6 +104,7 @@ class HostLicense(Base):
     license_status = Column(String(100), nullable=True)
     partial_product_key = Column(String(10), nullable=True)
     oem_key_found = Column(Boolean, nullable=True)
+    click_to_run = Column(Boolean, nullable=True)
     detection_method = Column(String(100), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

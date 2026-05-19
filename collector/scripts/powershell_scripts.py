@@ -62,10 +62,12 @@ try {
     $lic = $null
     $oem = $null
     try {
-        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "Name like '%Windows%' and PartialProductKey <> null" | Select-Object -First 1
+        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey <> null" -ErrorAction Stop |
+            Where-Object { $_.Name -like "*Windows*" } |
+            Select-Object -First 1
     } catch {}
     try {
-        $oem = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
+        $oem = (Get-CimInstance SoftwareLicensingService -ErrorAction Stop).OA3xOriginalProductKey
     } catch {}
     $obj = @{
         product             = "windows"
@@ -90,26 +92,48 @@ def ps_office_license():
 $ErrorActionPreference = "Stop"
 try {
     $lic = $null
+    # Registry first (fast)
+    $regPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Office",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Office"
+    )
+    $regVer = ""
+    $clickToRun = $false
+    foreach ($rp in $regPaths) {
+        try {
+            $sub = Get-ChildItem $rp -ErrorAction Stop | Where-Object { $_.Name -match "\\1[56789]\." -or $_.Name -match "\\16\." }
+            if ($sub) {
+                $regVer = ($sub[-1].Name -split "\\")[-1]
+                break
+            }
+        } catch {}
+    }
     try {
-        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "Name like '%Office%' and PartialProductKey <> null" | Select-Object -First 1
+        $c2r = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration" -ErrorAction Stop
+        if ($c2r.ProductReleaseIds) {
+            $clickToRun = $true
+            $regVer = $c2r.ProductReleaseIds
+        }
     } catch {}
-    if (-not $lic) {
-        # Tenta via Registry
-        $keys = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Office" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "\\1[56789]\." -or $_.Name -match "\\16\." }
-        $regVer = if ($keys) { ($keys[-1].Name -split "\\")[-1] } else { "" }
-        @{ product = "office"; installed = [bool]$regVer; version = $regVer; detection_method = "Registry" } | ConvertTo-Json -Compress
+    try {
+        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey <> null" -ErrorAction Stop |
+            Where-Object { $_.Name -like "*Office*" -or $_.Name -like "*365*" } |
+            Select-Object -First 1
+    } catch {}
+    if ($lic) {
+        @{
+            product             = "office"
+            installed           = $true
+            version             = ($lic.Name -replace "Office ","" -replace " .*","").Trim()
+            edition             = $lic.Name
+            license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+            partial_product_key = $lic.PartialProductKey
+            channel             = $lic.ProductKeyChannel
+            detection_method    = "WMI"
+        } | ConvertTo-Json -Compress
         return
     }
-    @{
-        product             = "office"
-        installed           = $true
-        version             = ($lic.Name -replace "Office ","" -replace " .*","").Trim()
-        edition             = $lic.Name
-        license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
-        partial_product_key = $lic.PartialProductKey
-        channel             = $lic.ProductKeyChannel
-        detection_method    = "WMI"
-    } | ConvertTo-Json -Compress
+    @{ product = "office"; installed = [bool]$regVer; version = $regVer; click_to_run = $clickToRun; detection_method = "Registry" } | ConvertTo-Json -Compress
 } catch {
     @{ product = "office"; installed = $false; detection_method = "error"; error = $_.Exception.Message } | ConvertTo-Json -Compress
 }

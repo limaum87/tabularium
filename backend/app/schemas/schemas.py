@@ -112,6 +112,7 @@ class LicensePayload(BaseModel):
     license_status: Optional[str] = None
     partial_product_key: Optional[str] = None
     oem_key_found: Optional[bool] = None
+    click_to_run: Optional[bool] = None
     detection_method: Optional[str] = None
 
 

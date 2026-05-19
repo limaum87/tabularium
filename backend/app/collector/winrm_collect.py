@@ -54,6 +54,41 @@ def _connect(hostname, cfg, operation_timeout_sec=60, read_timeout_sec=90):
     )
 
 
+def _run_ps_with_timeout(session, script, label="", timeout_sec=45):
+    """Executa PowerShell com timeout aplicado no próprio script.
+
+    Adiciona um [System.Threading.Thread]::Sleep watchdog para evitar
+    que o script PS trave indefinidamente.
+    """
+    import threading
+    import queue as queue_mod
+
+    result_q = queue_mod.Queue()
+
+    def _worker():
+        try:
+            result = session.run_ps(script)
+            result_q.put(result)
+        except Exception as e:
+            result_q.put(e)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout=timeout_sec)
+
+    if t.is_alive():
+        raise TimeoutError(f"Timeout ({timeout_sec}s) ao executar {label}")
+
+    result = result_q.get()
+    if isinstance(result, Exception):
+        raise result
+
+    if result.status_code != 0:
+        stderr = result.std_err.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"PowerShell error ({label}): {stderr[:200]}")
+    return result.std_out.decode("utf-8", errors="replace").strip()
+
+
 def _run_ps(session, script):
     """Executa PowerShell e retorna stdout."""
     result = session.run_ps(script)
@@ -128,10 +163,12 @@ try {
     $lic = $null
     $oem = $null
     try {
-        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "Name like '%Windows%' and PartialProductKey <> null" | Select-Object -First 1
+        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey <> null" -ErrorAction Stop |
+            Where-Object { $_.Name -like "*Windows*" } |
+            Select-Object -First 1
     } catch {}
     try {
-        $oem = (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey
+        $oem = (Get-CimInstance SoftwareLicensingService -ErrorAction Stop).OA3xOriginalProductKey
     } catch {}
     $obj = @{
         product             = "windows"
@@ -155,25 +192,51 @@ def _ps_office_license():
 $ErrorActionPreference = "Stop"
 try {
     $lic = $null
+    # Registry first (fast) — detecta versão instalada
+    $regPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Office",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Office"
+    )
+    $regVer = ""
+    $clickToRun = $false
+    foreach ($rp in $regPaths) {
+        try {
+            $sub = Get-ChildItem $rp -ErrorAction Stop | Where-Object { $_.Name -match "\\1[56789]\." -or $_.Name -match "\\16\." }
+            if ($sub) {
+                $regVer = ($sub[-1].Name -split "\\")[-1]
+                break
+            }
+        } catch {}
+    }
+    # Check Click-to-Run
     try {
-        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "Name like '%Office%' and PartialProductKey <> null" | Select-Object -First 1
+        $c2r = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration" -ErrorAction Stop
+        if ($c2r.ProductReleaseIds) {
+            $clickToRun = $true
+            $regVer = $c2r.ProductReleaseIds
+        }
     } catch {}
-    if (-not $lic) {
-        $keys = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Office" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "\\1[56789]\." -or $_.Name -match "\\16\." }
-        $regVer = if ($keys) { ($keys[-1].Name -split "\\")[-1] } else { "" }
-        @{ product = "office"; installed = [bool]$regVer; version = $regVer; detection_method = "Registry" } | ConvertTo-Json -Compress
+    # Try WMI (can be slow, but gives license status)
+    try {
+        $lic = Get-CimInstance SoftwareLicensingProduct -Filter "PartialProductKey <> null" -ErrorAction Stop |
+            Where-Object { $_.Name -like "*Office*" -or $_.Name -like "*365*" } |
+            Select-Object -First 1
+    } catch {}
+    if ($lic) {
+        @{
+            product             = "office"
+            installed           = $true
+            version             = ($lic.Name -replace "Office ","" -replace " .*","").Trim()
+            edition             = $lic.Name
+            license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
+            partial_product_key = $lic.PartialProductKey
+            channel             = $lic.ProductKeyChannel
+            detection_method    = "WMI"
+        } | ConvertTo-Json -Compress
         return
     }
-    @{
-        product             = "office"
-        installed           = $true
-        version             = ($lic.Name -replace "Office ","" -replace " .*","").Trim()
-        edition             = $lic.Name
-        license_status      = switch ($lic.LicenseStatus) { 0 { "Unlicensed" } 1 { "Licensed" } default { "Unknown" } }
-        partial_product_key = $lic.PartialProductKey
-        channel             = $lic.ProductKeyChannel
-        detection_method    = "WMI"
-    } | ConvertTo-Json -Compress
+    # Fallback: Registry only
+    @{ product = "office"; installed = [bool]$regVer; version = $regVer; click_to_run = $clickToRun; detection_method = "Registry" } | ConvertTo-Json -Compress
 } catch {
     @{ product = "office"; installed = $false; detection_method = "error"; error = $_.Exception.Message } | ConvertTo-Json -Compress
 }

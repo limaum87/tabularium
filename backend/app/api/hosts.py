@@ -125,6 +125,7 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
                 license_status=lic.license_status,
                 partial_product_key=lic.partial_product_key,
                 oem_key_found=lic.oem_key_found,
+                click_to_run=lic.click_to_run,
                 detection_method=lic.detection_method,
                 updated_at=now,
             ))
@@ -243,7 +244,7 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
     """Coleta manual via SSE — roda cada step individualmente e envia progresso."""
     import json as json_mod
     import winrm
-    from app.collector.winrm_collect import _get_settings, _make_fqdn, _connect, _run_ps, _safe_json
+    from app.collector.winrm_collect import _get_settings, _make_fqdn, _connect, _run_ps, _run_ps_with_timeout, _safe_json
     from app.collector.winrm_collect import (
         _ps_hardware, _ps_disks, _ps_network,
         _ps_windows_license, _ps_office_license, _ps_software,
@@ -361,26 +362,28 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
             yield sse({"type": "step_fail", "step": "network", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 
-        # ---- LICENÇAS (timeout maior — WMI SoftwareLicensingProduct é lento em máquinas antigas) ----
+        # ---- LICENÇAS (timeout controlado por step) ----
         yield sse({"type": "step", "step": "licenses", "message": "🔑 Coletando licenças..."})
         try:
-            # Cria sessão dedicada com timeout estendido para licenças
-            lic_session = _connect(target, cfg, operation_timeout_sec=120, read_timeout_sec=180)
+            lic_session = _connect(target, cfg, operation_timeout_sec=45, read_timeout_sec=60)
             licenses = []
             for ps_func, label in [(_ps_windows_license, "windows"), (_ps_office_license, "office")]:
                 try:
-                    raw = _run_ps(lic_session, ps_func())
+                    raw = _run_ps_with_timeout(lic_session, ps_func(), label=f"license-{label}", timeout_sec=45)
                     parsed = _safe_json(raw, f"license-{label}")
                     if parsed:
                         if isinstance(parsed, list):
                             licenses.extend(parsed)
                         else:
                             licenses.append(parsed)
-                except Exception:
-                    pass
+                    yield sse({"type": "step_progress", "step": "licenses", "message": f"  ✓ licença {label} OK"})
+                except TimeoutError as te:
+                    yield sse({"type": "step_progress", "step": "licenses", "message": f"  ⏱ licença {label}: timeout"})
+                except Exception as ee:
+                    yield sse({"type": "step_progress", "step": "licenses", "message": f"  ⚠ licença {label}: {str(ee)[:60]}"})
             db.query(HostLicense).filter(HostLicense.host_id == host_id_val).delete()
             for lic in licenses:
-                db.add(HostLicense(host_id=host_id_val, product=lic.get("product", "windows"), edition=lic.get("edition"), version=lic.get("version"), channel=lic.get("channel"), license_status=lic.get("license_status"), partial_product_key=lic.get("partial_product_key"), oem_key_found=lic.get("oem_key_found"), detection_method=lic.get("detection_method"), updated_at=now))
+                db.add(HostLicense(host_id=host_id_val, product=lic.get("product", "windows"), edition=lic.get("edition"), version=lic.get("version"), channel=lic.get("channel"), license_status=lic.get("license_status"), partial_product_key=lic.get("partial_product_key"), oem_key_found=lic.get("oem_key_found"), click_to_run=lic.get("click_to_run"), detection_method=lic.get("detection_method"), updated_at=now))
             db.commit()
             lic_summary = ", ".join(f"{l.get('product','?')}={l.get('license_status','?')}" for l in licenses)
             yield sse({"type": "step_ok", "step": "licenses", "message": f"✓ {len(licenses)} licença(s): {lic_summary}"})
