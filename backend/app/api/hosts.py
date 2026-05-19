@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import (
     get_db, Host, HostHardware, HostDisk, HostNetwork,
-    HostLicense, HostSoftware, ScanHistory,
+    HostLicense, HostSoftware, HostRemoteAccess, ScanHistory,
 )
 from app.core.security import get_current_user
 from app.schemas.schemas import CheckinPayload, HostResponse
@@ -248,6 +248,7 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
     from app.collector.winrm_collect import (
         _ps_hardware, _ps_disks, _ps_network,
         _ps_windows_license, _ps_office_license, _ps_software,
+        _ps_remote_access,
     )
 
     host = db.query(Host).filter(Host.id == host_id).first()
@@ -408,6 +409,43 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
             yield sse({"type": "step_fail", "step": "software", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 
+        # ---- ACESSO REMOTO (AnyDesk, UltraVNC) ----
+        yield sse({"type": "step", "step": "remote_access", "message": "🖥️ Coletando acesso remoto..."})
+        try:
+            raw = _run_ps(session, _ps_remote_access())
+            ra = _safe_json(raw, "remote_access")
+            if ra:
+                existing = db.query(HostRemoteAccess).filter(HostRemoteAccess.host_id == host_id_val).first()
+                ra_data = {
+                    "anydesk_id": ra.get("anydesk_id"),
+                    "anydesk_alias": ra.get("anydesk_alias"),
+                    "anydesk_version": ra.get("anydesk_version"),
+                    "ultravnc_installed": ra.get("ultravnc_installed"),
+                    "ultravnc_port": ra.get("ultravnc_port"),
+                    "ultravnc_version": ra.get("ultravnc_version"),
+                    "updated_at": now,
+                }
+                if existing:
+                    for k, v in ra_data.items():
+                        setattr(existing, k, v)
+                else:
+                    db.add(HostRemoteAccess(host_id=host_id_val, **ra_data))
+                db.commit()
+                parts = []
+                if ra.get("anydesk_id"):
+                    parts.append(f"AnyDesk: {ra['anydesk_id']}")
+                if ra.get("ultravnc_installed"):
+                    port = ra.get("ultravnc_port", 5900)
+                    parts.append(f"UltraVNC: :{port}")
+                msg = " | ".join(parts) if parts else "Nenhum encontrado"
+                yield sse({"type": "step_ok", "step": "remote_access", "message": f"✓ {msg}"})
+            else:
+                yield sse({"type": "step_ok", "step": "remote_access", "message": "⚠ Sem dados de acesso remoto"})
+            total_success += 1
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "remote_access", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
+
         # ---- DONE ----
         # Scan history
         db.add(ScanHistory(host_id=host_id_val, hostname=host.hostname, status="success", started_at=now, finished_at=datetime.utcnow()))
@@ -436,6 +474,7 @@ def delete_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_curre
     db.query(HostNetwork).filter(HostNetwork.host_id == host_id).delete()
     db.query(HostLicense).filter(HostLicense.host_id == host_id).delete()
     db.query(HostSoftware).filter(HostSoftware.host_id == host_id).delete()
+    db.query(HostRemoteAccess).filter(HostRemoteAccess.host_id == host_id).delete()
     db.query(ScanHistory).filter(ScanHistory.host_id == host_id).delete()
     db.delete(host)
     db.commit()
@@ -796,6 +835,7 @@ def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_
     network = db.query(HostNetwork).filter(HostNetwork.host_id == host_id).all()
     licenses = db.query(HostLicense).filter(HostLicense.host_id == host_id).all()
     software = db.query(HostSoftware).filter(HostSoftware.host_id == host_id).all()
+    remote_access = db.query(HostRemoteAccess).filter(HostRemoteAccess.host_id == host_id).first()
     scans = (
         db.query(ScanHistory)
         .filter(ScanHistory.host_id == host_id)
@@ -811,5 +851,6 @@ def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_
         "network": network,
         "licenses": licenses,
         "software": software,
+        "remote_access": remote_access,
         "scans": scans,
     }

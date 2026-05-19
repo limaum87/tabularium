@@ -235,6 +235,49 @@
                     </div>
                 </div>
 
+                <!-- Acesso Remoto -->
+                <div class="panel animate-in animate-in-delay-3" style="margin-bottom:20px;">
+                    <div class="panel-header"><span class="panel-title">🖥️ Acesso Remoto</span></div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <tbody>
+                                ${(() => {
+                                    const ra = data.remote_access;
+                                    if (!ra) return '<tr><td colspan="2" style="text-align:center;padding:20px;color:var(--text-muted)">Sem dados de acesso remoto — execute uma coleta</td></tr>';
+                                    let rows = '';
+                                    // AnyDesk
+                                    if (ra.anydesk_id) {
+                                        rows += `<tr>
+                                            <td style="width:200px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">AnyDesk ID</td>
+                                            <td><span class="mono" style="font-size:18px;font-weight:600;color:var(--accent);letter-spacing:0.05em;">${ra.anydesk_id}</span>
+                                                ${ra.anydesk_alias ? `<span style="margin-left:12px;color:var(--text-muted);font-size:12px;">(${ra.anydesk_alias})</span>` : ''}
+                                                ${ra.anydesk_version ? `<span style="margin-left:8px;color:var(--text-muted);font-size:11px;">v${ra.anydesk_version}</span>` : ''}
+                                            </td>
+                                        </tr>`;
+                                    } else {
+                                        rows += `<tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">AnyDesk</td><td style="color:var(--text-muted);">Não detectado</td></tr>`;
+                                    }
+                                    // UltraVNC
+                                    if (ra.ultravnc_installed) {
+                                        const ip = (data.network && data.network.length > 0 && data.network[0].ip) ? data.network[0].ip.split(',')[0] : h.hostname;
+                                        const port = ra.ultravnc_port || 5900;
+                                        rows += `<tr>
+                                            <td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">UltraVNC</td>
+                                            <td><span class="badge-status badge-success" style="margin-right:8px;">Instalado</span>
+                                                <span class="mono" style="font-size:13px;">${ip}:${port}</span>
+                                                ${ra.ultravnc_version ? `<span style="margin-left:8px;color:var(--text-muted);font-size:11px;">v${ra.ultravnc_version}</span>` : ''}
+                                            </td>
+                                        </tr>`;
+                                    } else {
+                                        rows += `<tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">UltraVNC</td><td style="color:var(--text-muted);">Não instalado</td></tr>`;
+                                    }
+                                    return rows;
+                                })()}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <!-- Software -->
                 <div class="panel animate-in animate-in-delay-4" style="margin-bottom:20px;">
                     <div class="panel-header">
@@ -376,6 +419,9 @@
                                         break;
                                     case 'step':
                                         addLine('step', data.message);
+                                        break;
+                                    case 'step_progress':
+                                        addLine('ok', data.message);
                                         break;
                                     case 'step_ok':
                                         addLine('ok', data.message);

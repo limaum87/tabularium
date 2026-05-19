@@ -33,11 +33,13 @@ if [ -n "$DNS_SERVERS" ]; then
     cat /etc/resolv.conf
 fi
 
-# Auto-migrate: garante que colunas novas existam
+# Auto-migrate: garante que colunas/tabelas novas existam
 python -c "
 from app.core.database import engine
 import sqlalchemy
 insp = sqlalchemy.inspect(engine)
+
+# Coluna click_to_run em host_licenses
 cols = [c['name'] for c in insp.get_columns('host_licenses')]
 if 'click_to_run' not in cols:
     print('[migration] Adicionando coluna click_to_run em host_licenses...')
@@ -45,9 +47,32 @@ if 'click_to_run' not in cols:
         conn.execute(sqlalchemy.text('ALTER TABLE host_licenses ADD COLUMN click_to_run TINYINT(1) DEFAULT NULL AFTER oem_key_found'))
         conn.commit()
     print('[migration] OK')
-else:
-    print('[migration] Coluna click_to_run já existe, pulando...')
-" || echo "[migration] Aviso: não conseguiu verificar/criar coluna click_to_run"
+
+# Tabela host_remote_access
+tables = insp.get_table_names()
+if 'host_remote_access' not in tables:
+    print('[migration] Criando tabela host_remote_access...')
+    with engine.connect() as conn:
+        conn.execute(sqlalchemy.text('''
+            CREATE TABLE host_remote_access (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                host_id INT NOT NULL,
+                anydesk_id VARCHAR(50) DEFAULT NULL,
+                anydesk_alias VARCHAR(255) DEFAULT NULL,
+                anydesk_version VARCHAR(50) DEFAULT NULL,
+                ultravnc_installed TINYINT(1) DEFAULT NULL,
+                ultravnc_port INT DEFAULT NULL,
+                ultravnc_version VARCHAR(50) DEFAULT NULL,
+                teamviewer_id VARCHAR(50) DEFAULT NULL,
+                updated_at DATETIME DEFAULT NULL,
+                INDEX ix_host_remote_access_host_id (host_id)
+            )
+        '''))
+        conn.commit()
+    print('[migration] OK')
+
+print('[migration] Tudo ok')
+" || echo "[migration] Aviso: não conseguiu verificar/criar migrações"
 
 echo "[entrypoint] Iniciando uvicorn..."
 exec "$@"

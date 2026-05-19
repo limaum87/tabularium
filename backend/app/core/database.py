@@ -109,6 +109,21 @@ class HostLicense(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class HostRemoteAccess(Base):
+    __tablename__ = "host_remote_access"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    host_id = Column(Integer, nullable=False, index=True)
+    anydesk_id = Column(String(50), nullable=True)
+    anydesk_alias = Column(String(255), nullable=True)
+    anydesk_version = Column(String(50), nullable=True)
+    ultravnc_installed = Column(Boolean, nullable=True)
+    ultravnc_port = Column(Integer, nullable=True)
+    ultravnc_version = Column(String(50), nullable=True)
+    teamviewer_id = Column(String(50), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class HostSoftware(Base):
     __tablename__ = "host_software"
 
