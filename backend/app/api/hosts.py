@@ -240,6 +240,58 @@ def ping_sweep(db: Session = Depends(get_db), _=Depends(get_current_user)):
     }
 
 
+@router.get("/logged-users")
+def logged_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Retorna todos os usuários coletados e a última máquina em que logaram."""
+    from sqlalchemy import func
+
+    # Busca todos os registros de hardware que possuem last_user
+    # Para cada last_user distinto, pega o registro mais recente
+    subquery = (
+        db.query(
+            HostHardware.last_user,
+            func.max(HostHardware.updated_at).label("max_updated")
+        )
+        .filter(HostHardware.last_user != None, HostHardware.last_user != "")
+        .group_by(HostHardware.last_user)
+        .subquery()
+    )
+
+    # Join com hardware para pegar o host_id e com Host para pegar o hostname
+    results = (
+        db.query(
+            HostHardware.last_user,
+            HostHardware.updated_at,
+            Host.hostname,
+            Host.id,
+            HostHardware.cpu,
+            HostHardware.ram_gb,
+        )
+        .join(subquery, (HostHardware.last_user == subquery.c.last_user) & (HostHardware.updated_at == subquery.c.max_updated))
+        .join(Host, HostHardware.host_id == Host.id)
+        .order_by(HostHardware.last_user)
+        .all()
+    )
+
+    # Deduplica por last_user (caso haja empate no updated_at)
+    seen = set()
+    users = []
+    for row in results:
+        user_key = row.last_user.upper() if row.last_user else None
+        if user_key and user_key not in seen:
+            seen.add(user_key)
+            users.append({
+                "last_user": row.last_user,
+                "hostname": row.hostname,
+                "host_id": row.id,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                "cpu": row.cpu,
+                "ram_gb": row.ram_gb,
+            })
+
+    return {"users": users, "total": len(users)}
+
+
 @router.get("/{host_id}/action/collect-stream")
 def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Coleta manual via SSE — roda cada step individualmente e envia progresso."""

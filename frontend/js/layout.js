@@ -25,6 +25,7 @@ function loadLayout(activePage) {
         { id: 'hosts', icon: '⊡', label: 'Hosts', href: '/hosts.html' },
         { id: 'legacy', icon: '⊘', label: 'Micros Legados', href: '/legacy.html', badge: true },
         { section: 'Inventário' },
+        { id: 'logged-users', icon: '⊙', label: 'Usuários Logados', href: '/logged-users.html' },
         { id: 'software', icon: '◈', label: 'Softwares', href: '/software.html' },
         { id: 'licenses', icon: '◎', label: 'Licenças', href: '/licenses.html' },
     ];

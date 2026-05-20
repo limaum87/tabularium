@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Usuários Logados</title>
+    <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .user-avatar-sm {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #2a3040, #1e2536);
+            border: 1px solid var(--border-medium);
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: 11px;
+            color: var(--accent);
+            flex-shrink: 0;
+            margin-right: 10px;
+        }
+        .user-name-cell {
+            display: flex;
+            align-items: center;
+        }
+        .user-name-text {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+        .user-domain {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 1px;
+        }
+        .host-link {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            color: var(--accent);
+            transition: color 0.2s;
+        }
+        .host-link:hover {
+            color: #e8c84a;
+            text-decoration: underline;
+        }
+        .stat-mini {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        .stat-mini .val {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+        .empty-state .empty-title {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+        .empty-state .empty-desc {
+            font-size: 13px;
+            max-width: 400px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('logged-users');
+
+        const mainContent = document.querySelector('.main-content');
+
+        async function loadLoggedUsers() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div>
+                    <h1>Usuários Logados</h1>
+                    <p class="page-subtitle">Todos os usuários coletados e a última máquina em que logaram</p>
+                </div>
+            </div>
+            <div class="page-body">
+                <div class="panel animate-in">
+                    <div class="panel-header">
+                        <span class="panel-title">Lista de Usuários</span>
+                        <div style="display:flex;gap:12px;align-items:center;">
+                            <input type="text" class="form-control-dark" id="search-users" placeholder="Buscar usuário ou máquina..." style="width:280px;padding:8px 14px;font-size:12px;">
+                            <span class="stat-mini" id="total-count"></span>
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table" id="users-table">
+                            <thead>
+                                <tr>
+                                    <th>Usuário</th>
+                                    <th>Última Máquina</th>
+                                    <th>CPU</th>
+                                    <th>RAM</th>
+                                    <th>Última Coleta</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);font-family:var(--font-mono);">Carregando...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            const res = await apiFetch('/api/hosts/logged-users');
+            if (!res) return;
+            const data = await res.json();
+            const users = data.users || [];
+
+            const tbody = document.querySelector('#users-table tbody');
+            const totalEl = document.getElementById('total-count');
+
+            totalEl.innerHTML = `Total: <span class="val">${users.length}</span> usuário(s)`;
+
+            function renderUsers(list) {
+                tbody.innerHTML = '';
+                if (list.length === 0) {
+                    tbody.innerHTML = `
+                    <tr><td colspan="5">
+                        <div class="empty-state">
+                            <div class="empty-icon">👤</div>
+                            <div class="empty-title">Nenhum usuário coletado</div>
+                            <div class="empty-desc">Os usuários aparecem após a coleta de dados das máquinas. Execute uma coleta em algum host para começar.</div>
+                        </div>
+                    </td></tr>`;
+                    return;
+                }
+
+                list.forEach(u => {
+                    // Parse DOMAIN\username
+                    let domain = '';
+                    let username = u.last_user || '';
+                    if (username.includes('\\')) {
+                        const parts = username.split('\\');
+                        domain = parts[0];
+                        username = parts[1];
+                    } else if (username.includes('@')) {
+                        const parts = username.split('@');
+                        username = parts[0];
+                        domain = parts[1];
+                    }
+
+                    const initials = username.substring(0, 2).toUpperCase();
+                    const dt = u.updated_at ? new Date(u.updated_at).toLocaleString('pt-BR') : '—';
+                    const cpuShort = u.cpu ? (u.cpu.length > 35 ? u.cpu.substring(0, 35) + '…' : u.cpu) : '—';
+                    const ram = u.ram_gb ? u.ram_gb + ' GB' : '—';
+
+                    tbody.innerHTML += `<tr>
+                        <td>
+                            <div class="user-name-cell">
+                                <div class="user-avatar-sm">${initials}</div>
+                                <div>
+                                    <div class="user-name-text">${username}</div>
+                                    ${domain ? `<div class="user-domain">${domain}</div>` : ''}
+                                </div>
+                            </div>
+                        </td>
+                        <td><a href="/host-detail.html?id=${u.host_id}" class="host-link">${u.hostname}</a></td>
+                        <td class="mono" style="font-size:12px;">${cpuShort}</td>
+                        <td class="mono">${ram}</td>
+                        <td style="font-size:12px;color:var(--text-muted);">${dt}</td>
+                    </tr>`;
+                });
+            }
+
+            renderUsers(users);
+
+            // Filtro de busca
+            let allUsers = users;
+            document.getElementById('search-users').addEventListener('input', function() {
+                const q = this.value.toLowerCase();
+                const filtered = allUsers.filter(u => {
+                    return (u.last_user || '').toLowerCase().includes(q) || (u.hostname || '').toLowerCase().includes(q);
+                });
+                renderUsers(filtered);
+            });
+        }
+
+        loadLoggedUsers();
+    </script>
+</body>
+</html>
