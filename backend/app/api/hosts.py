@@ -10,6 +10,7 @@ from app.core.database import (
 )
 from app.core.security import get_current_user
 from app.schemas.schemas import CheckinPayload, HostResponse
+from app.api.activity import log_activity
 
 router = APIRouter(prefix="/api/hosts", tags=["hosts"])
 
@@ -154,6 +155,16 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
         finished_at=now,
     ))
 
+    # Activity log
+    log_activity(db,
+        activity_type="collector_checkin",
+        hostname=body.hostname,
+        host_id=host_id,
+        status="success",
+        message=f"Coleta automática: {body.hostname}",
+        source="collector",
+    )
+
     db.commit()
     return {"detail": "Check-in recebido", "host_id": host_id}
 
@@ -231,6 +242,17 @@ def ping_sweep(db: Session = Depends(get_db), _=Depends(get_current_user)):
         host.last_ping = now
 
     db.commit()
+
+    # Activity log
+    log_activity(db,
+        activity_type="ping_sweep",
+        status="success",
+        message=f"Ping sweep: {online} online, {offline} offline de {len(active_hosts)} hosts",
+        details={"online": online, "offline": offline, "total": len(active_hosts)},
+        source="manual",
+    )
+    db.commit()
+
     return {
         "detail": f"Ping sweep concluído: {online} online, {offline} offline",
         "total": len(active_hosts),
@@ -519,6 +541,17 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
         # ---- DONE ----
         # Scan history
         db.add(ScanHistory(host_id=host_id_val, hostname=host.hostname, status="success", started_at=now, finished_at=datetime.utcnow()))
+
+        # Activity log
+        log_activity(db,
+            activity_type="manual_collect",
+            hostname=host.hostname,
+            host_id=host_id_val,
+            status="success" if total_fail == 0 else "partial",
+            message=f"Coleta manual: {total_success} OK, {total_fail} falha(s)",
+            details={"success": total_success, "fail": total_fail},
+            source="manual",
+        )
         db.commit()
 
         yield sse({
@@ -611,6 +644,7 @@ def action_ping(host_id: int, db: Session = Depends(get_db), _=Depends(get_curre
             # Atualiza ping_status
             host.ping_status = "online"
             host.last_ping = datetime.utcnow()
+            log_activity(db, activity_type="ping_single", hostname=hostname, host_id=host_id, status="success", message=msg, source="manual")
             db.commit()
             return {
                 "success": True,
@@ -621,6 +655,8 @@ def action_ping(host_id: int, db: Session = Depends(get_db), _=Depends(get_curre
                 "debug": debug,
             }
         else:
+            log_activity(db, activity_type="ping_single", hostname=hostname, host_id=host_id, status="fail", message=f"{hostname} não respondeu ao ping", source="manual")
+            db.commit()
             return {
                 "success": False,
                 "message": f"{hostname} não respondeu ao ping" + (f" [resolveu: {resolved_ip}]" if resolved_ip else " [DNS não resolveu]"),
@@ -631,6 +667,7 @@ def action_ping(host_id: int, db: Session = Depends(get_db), _=Depends(get_curre
     except subprocess.TimeoutExpired:
         host.ping_status = "offline"
         host.last_ping = datetime.utcnow()
+        log_activity(db, activity_type="ping_single", hostname=hostname, host_id=host_id, status="timeout", message=f"Timeout ao pingar {hostname}", source="manual")
         db.commit()
         return {"success": False, "message": f"Timeout ao pingar {hostname}", "hostname": hostname, "resolved_ip": resolved_ip, "debug": debug}
     except Exception as e:
@@ -681,6 +718,7 @@ def action_test_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get
         # Atualiza status e last_seen
         host.status = "online"
         host.last_seen = datetime.utcnow()
+        log_activity(db, activity_type="winrm_test", hostname=host.hostname, host_id=host_id, status="success", message=f"WinRM OK: {host.hostname}", source="manual")
         db.commit()
         return {
             "success": True,
@@ -691,6 +729,7 @@ def action_test_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get
         # Atualiza status se falhou
         host.status = "offline"
         host.updated_at = datetime.utcnow()
+        log_activity(db, activity_type="winrm_test", hostname=host.hostname, host_id=host_id, status="fail", message=f"WinRM falhou: {str(e)[:100]}", source="manual")
         db.commit()
         return {
             "success": False,
@@ -872,6 +911,8 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
             host.status = "online"
             host.last_seen = datetime.utcnow()
             db.commit()
+            log_activity(db, activity_type="winrm_enable", hostname=host.hostname, host_id=host_id, status="success", message=f"WinRM ativado remotamente em {host.hostname}", source="manual")
+            db.commit()
             return {
                 "success": True,
                 "message": f"WinRM ativado remotamente em {host.hostname}. Use 'Testar WinRM' para confirmar.",
@@ -889,6 +930,8 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
                 "debug": debug,
             }
     except subprocess.TimeoutExpired:
+        log_activity(db, activity_type="winrm_enable", hostname=host.hostname, host_id=host_id, status="timeout", message=f"Timeout ao ativar WinRM em {host.hostname}", source="manual")
+        db.commit()
         return {"success": False, "message": f"Timeout (30s) ao ativar WinRM em {host.hostname}. Possível firewall bloqueando SMB (porta 445).", "hostname": host.hostname}
     except Exception as e:
         return {"success": False, "message": f"Erro: {str(e)[:200]}", "hostname": host.hostname}

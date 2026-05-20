@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Atividades</title>
+    <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .activity-type {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            letter-spacing: 0.02em;
+        }
+        .type-collector_checkin { background: var(--info-dim); color: var(--info); }
+        .type-manual_collect { background: var(--accent-dim); color: var(--accent); }
+        .type-discovery_run { background: var(--success-dim); color: var(--success); }
+        .type-discovery_import { background: var(--success-dim); color: var(--success); }
+        .type-ping_sweep { background: var(--warning-dim); color: var(--warning); }
+        .type-ping_single { background: var(--warning-dim); color: var(--warning); }
+        .type-winrm_test { background: rgba(139, 147, 168, 0.12); color: var(--text-secondary); }
+        .type-winrm_enable { background: var(--danger-dim); color: var(--danger); }
+        .type-host_created { background: var(--info-dim); color: var(--info); }
+
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-dot.success { background: var(--success); }
+        .status-dot.fail, .status-dot.error { background: var(--danger); }
+        .status-dot.partial { background: var(--warning); }
+        .status-dot.timeout { background: var(--warning); }
+        .status-dot.info { background: var(--info); }
+
+        .source-badge {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .source-system { background: rgba(96, 165, 250, 0.12); color: var(--info); }
+        .source-collector { background: var(--accent-dim); color: var(--accent); }
+        .source-manual { background: rgba(139, 147, 168, 0.12); color: var(--text-secondary); }
+
+        /* Summary cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .summary-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 16px 18px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .summary-card:hover {
+            border-color: var(--border-medium);
+            background: var(--bg-card-hover);
+        }
+        .summary-card.active {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+        }
+        .summary-card .sc-icon { font-size: 18px; margin-bottom: 6px; }
+        .summary-card .sc-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-weight: 600;
+        }
+        .summary-card .sc-count {
+            font-family: var(--font-mono);
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.1;
+        }
+        .summary-card .sc-last {
+            font-size: 10px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            margin-top: 4px;
+        }
+
+        /* Timeline style for the table */
+        .time-cell {
+            white-space: nowrap;
+            font-size: 12px;
+            font-family: var(--font-mono);
+            color: var(--text-muted);
+        }
+        .time-cell .time-main { color: var(--text-primary); font-weight: 500; }
+        .time-cell .time-ago { font-size: 10px; color: var(--text-muted); display: block; margin-top: 2px; }
+
+        .message-cell {
+            font-size: 13px;
+            color: var(--text-secondary);
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Filters bar */
+        .filters-bar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            border: 1px solid var(--border-subtle);
+            background: transparent;
+            color: var(--text-muted);
+            transition: all 0.2s;
+        }
+        .filter-chip:hover { border-color: var(--border-medium); color: var(--text-primary); }
+        .filter-chip.active { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+
+        .load-more-btn {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            background: none;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 12px;
+        }
+        .load-more-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: var(--accent-dim);
+        }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('activity');
+
+        const mainContent = document.querySelector('.main-content');
+
+        let currentFilter = null;
+        let currentOffset = 0;
+        let allItems = [];
+        const PAGE_SIZE = 50;
+
+        // Activity type labels
+        const TYPE_LABELS = {
+            collector_checkin: { label: 'Coleta Auto', icon: '🔄' },
+            manual_collect: { label: 'Coleta Manual', icon: '🖐' },
+            discovery_run: { label: 'Discovery', icon: '🔍' },
+            discovery_import: { label: 'Importação', icon: '📥' },
+            ping_sweep: { label: 'Ping Sweep', icon: '📡' },
+            ping_single: { label: 'Ping', icon: '📡' },
+            winrm_test: { label: 'Teste WinRM', icon: '🔌' },
+            winrm_enable: { label: 'Ativar WinRM', icon: '⚡' },
+            host_created: { label: 'Host Criado', icon: '➕' },
+        };
+
+        function timeAgo(dateStr) {
+            if (!dateStr) return '';
+            const now = new Date();
+            const d = new Date(dateStr);
+            const diff = Math.floor((now - d) / 1000);
+            if (diff < 60) return 'agora mesmo';
+            if (diff < 3600) return `${Math.floor(diff/60)}min atrás`;
+            if (diff < 86400) return `${Math.floor(diff/3600)}h atrás`;
+            if (diff < 604800) return `${Math.floor(diff/86400)}d atrás`;
+            return d.toLocaleDateString('pt-BR');
+        }
+
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '—';
+            const d = new Date(dateStr);
+            return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        function formatTime(dateStr) {
+            if (!dateStr) return '—';
+            const d = new Date(dateStr);
+            return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        async function loadActivity() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                        <h1>Atividades</h1>
+                        <p class="page-subtitle">Histórico de coletas, discoverys e ações do sistema</p>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn-primary-accent" onclick="exportActivity('csv')" style="padding:8px 16px;font-size:12px;">⬇ Exportar CSV</button>
+                        <button class="btn-primary-accent" onclick="exportActivity('json')" style="padding:8px 16px;font-size:12px;">⬇ Exportar JSON</button>
+                    </div>
+                </div>
+            </div>
+            <div class="page-body">
+                <!-- Summary Cards -->
+                <div class="summary-grid" id="summary-grid"></div>
+
+                <!-- Filters -->
+                <div class="panel animate-in" style="margin-bottom:20px;">
+                    <div class="panel-header" style="padding:12px 20px;">
+                        <div class="filters-bar">
+                            <span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);text-transform:uppercase;letter-spacing:0.08em;margin-right:4px;">Filtro:</span>
+                            <button class="filter-chip active" data-type="" onclick="setFilter(null, this)">Todos</button>
+                            <div id="filter-chips"></div>
+                            <div style="flex:1;"></div>
+                            <input type="text" class="form-control-dark" id="search-activity" placeholder="Buscar..." style="width:200px;padding:6px 12px;font-size:12px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity Table -->
+                <div class="panel animate-in animate-in-delay-1">
+                    <div class="panel-header">
+                        <span class="panel-title">Log de Atividades</span>
+                        <span style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);" id="total-count"></span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table" id="activity-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:150px;">Data/Hora</th>
+                                    <th>Tipo</th>
+                                    <th>Hostname</th>
+                                    <th>Status</th>
+                                    <th>Mensagem</th>
+                                    <th>Fonte</th>
+                                </tr>
+                            </thead>
+                            <tbody id="activity-tbody">
+                                <tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted);font-family:var(--font-mono);">Carregando...</td></tr>
+                            </tbody>
+                        </table>
+                        <button class="load-more-btn" id="load-more-btn" style="display:none;" onclick="loadMore()">Carregar mais...</button>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            // Load summary
+            loadSummary();
+
+            // Load activity
+            currentOffset = 0;
+            allItems = [];
+            loadItems();
+        }
+
+        async function loadSummary() {
+            const res = await apiFetch('/api/activity/summary');
+            if (!res) return;
+            const data = await res.json();
+
+            // Summary cards
+            const grid = document.getElementById('summary-grid');
+            grid.innerHTML = '';
+
+            data.types.forEach(t => {
+                if (t.count === 0 && !t.last_run) return;
+                const lastRun = t.last_run ? timeAgo(t.last_run) : 'nunca';
+                const card = document.createElement('div');
+                card.className = `summary-card ${currentFilter === t.type ? 'active' : ''}`;
+                card.onclick = () => {
+                    setFilter(t.type);
+                };
+                card.innerHTML = `
+                    <div class="sc-icon">${t.icon}</div>
+                    <div class="sc-label">${t.label}</div>
+                    <div class="sc-count">${t.count}</div>
+                    <div class="sc-last">${t.count > 0 ? 'último: ' + lastRun : ''}</div>
+                `;
+                grid.appendChild(card);
+            });
+
+            // Filter chips
+            const chips = document.getElementById('filter-chips');
+            chips.innerHTML = '';
+            data.types.forEach(t => {
+                if (t.count === 0) return;
+                const btn = document.createElement('button');
+                btn.className = `filter-chip ${currentFilter === t.type ? 'active' : ''}`;
+                btn.dataset.type = t.type;
+                btn.textContent = `${t.icon} ${t.label} (${t.count})`;
+                btn.onclick = () => setFilter(t.type, btn);
+                chips.appendChild(btn);
+            });
+        }
+
+        async function loadItems() {
+            const tbody = document.getElementById('activity-tbody');
+            const params = new URLSearchParams();
+            if (currentFilter) params.set('type', currentFilter);
+            const searchVal = document.getElementById('search-activity')?.value;
+            if (searchVal) params.set('search', searchVal);
+            params.set('limit', PAGE_SIZE);
+            params.set('offset', currentOffset);
+
+            const res = await apiFetch(`/api/activity?${params}`);
+            if (!res) return;
+            const data = await res.json();
+
+            document.getElementById('total-count').textContent = `${data.total} registro(s)`;
+
+            if (currentOffset === 0) {
+                allItems = data.items;
+                tbody.innerHTML = '';
+            } else {
+                allItems = allItems.concat(data.items);
+            }
+
+            renderItems(data.items);
+
+            // Load more button
+            const btn = document.getElementById('load-more-btn');
+            if (allItems.length < data.total) {
+                btn.style.display = 'block';
+                btn.textContent = `Carregar mais (${data.total - allItems.length} restantes)...`;
+            } else {
+                btn.style.display = 'none';
+            }
+        }
+
+        function renderItems(items) {
+            const tbody = document.getElementById('activity-tbody');
+
+            if (items.length === 0 && currentOffset === 0) {
+                tbody.innerHTML = `
+                <tr><td colspan="6">
+                    <div style="text-align:center;padding:60px 20px;color:var(--text-muted);">
+                        <div style="font-size:48px;margin-bottom:16px;opacity:0.3;">📋</div>
+                        <div style="font-family:var(--font-mono);font-size:15px;color:var(--text-secondary);margin-bottom:8px;">Nenhuma atividade registrada</div>
+                        <div style="font-size:13px;">As atividades aparecerão aqui conforme o sistema for utilizado.</div>
+                    </div>
+                </td></tr>`;
+                return;
+            }
+
+            items.forEach(item => {
+                const typeInfo = TYPE_LABELS[item.activity_type] || { label: item.activity_type, icon: '•' };
+                const statusClass = item.status || 'info';
+                const sourceClass = item.source || 'manual';
+
+                tbody.innerHTML += `<tr>
+                    <td>
+                        <div class="time-cell">
+                            <span class="time-main">${formatTime(item.created_at)}</span>
+                            <span class="time-ago">${timeAgo(item.created_at)}</span>
+                        </div>
+                    </td>
+                    <td><span class="activity-type type-${item.activity_type}">${typeInfo.icon} ${typeInfo.label}</span></td>
+                    <td>${item.hostname ? `<a href="/host-detail.html?id=${item.host_id}" style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-primary);">${item.hostname}</a>` : '<span style="color:var(--text-muted);">—</span>'}</td>
+                    <td><span class="status-dot ${statusClass}"></span><span style="font-size:12px;color:var(--text-muted);">${item.status || '—'}</span></td>
+                    <td class="message-cell" title="${(item.message || '').replace(/"/g, '&quot;')}">${item.message || '—'}</td>
+                    <td><span class="source-badge source-${sourceClass}">${item.source || '—'}</span></td>
+                </tr>`;
+            });
+        }
+
+        function loadMore() {
+            currentOffset += PAGE_SIZE;
+            loadItems();
+        }
+
+        function setFilter(type, btnEl) {
+            currentFilter = type;
+            currentOffset = 0;
+
+            // Update chip states
+            document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('.summary-card').forEach(c => c.classList.remove('active'));
+
+            if (type) {
+                document.querySelectorAll(`.filter-chip[data-type="${type}"]`).forEach(c => c.classList.add('active'));
+                document.querySelectorAll('.summary-card').forEach(c => {
+                    // match by onclick text
+                });
+            } else {
+                document.querySelector('.filter-chip[data-type=""]')?.classList.add('active');
+            }
+
+            // Reload summary for active state
+            loadSummary();
+            loadItems();
+        }
+
+        // Search debounce
+        let searchTimeout;
+        document.addEventListener('input', (e) => {
+            if (e.target.id === 'search-activity') {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    currentOffset = 0;
+                    loadItems();
+                }, 300);
+            }
+        });
+
+        function exportActivity(format) {
+            const token = getToken();
+            let url = `/api/activity/export?format=${format}`;
+            if (currentFilter) url += `&type=${currentFilter}`;
+            // Open in new tab with auth header workaround — use fetch + download
+            fetch(url, { headers: { 'Authorization': `Bearer ${token}` } })
+                .then(r => r.blob())
+                .then(blob => {
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `activity_log.${format}`;
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                });
+        }
+
+        loadActivity();
+    </script>
+</body>
+</html>

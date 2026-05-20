@@ -165,6 +165,31 @@ class PurchasedLicense(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ActivityLog(Base):
+    __tablename__ = "activity_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    activity_type = Column(Enum(
+        "collector_checkin",
+        "manual_collect",
+        "discovery_run",
+        "discovery_import",
+        "ping_sweep",
+        "ping_single",
+        "winrm_test",
+        "winrm_enable",
+        "host_created",
+        name="activity_type",
+    ), nullable=False, index=True)
+    hostname = Column(String(255), nullable=True, index=True)
+    host_id = Column(Integer, nullable=True)
+    status = Column(String(50), nullable=True)
+    message = Column(Text, nullable=True)
+    details = Column(Text, nullable=True)  # JSON com dados extras
+    source = Column(String(100), nullable=True)  # "collector", "manual", "system"
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class Setting(Base):
     __tablename__ = "settings"
 

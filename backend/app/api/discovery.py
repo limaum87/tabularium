@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.core.database import get_db, Host, ScanHistory, Setting
 from app.core.security import require_role
+from app.api.activity import log_activity
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
 
@@ -107,6 +108,23 @@ def run_discovery(db: Session = Depends(get_db), _=Depends(require_role("admin")
         "hosts": result,
     }
 
+    # Activity log
+    log_activity(db,
+        activity_type="discovery_run",
+        status="success",
+        message=f"Discovery: {len(result)} máquinas ({sum(1 for h in result if h['status'] == 'new')} novas)",
+        details={"total": len(result), "new": sum(1 for h in result if h["status"] == "new"), "existing": sum(1 for h in result if h["status"] == "existing")},
+        source="manual",
+    )
+    db.commit()
+
+    return {
+        "total": len(result),
+        "new_count": sum(1 for h in result if h["status"] == "new"),
+        "existing_count": sum(1 for h in result if h["status"] == "existing"),
+        "hosts": result,
+    }
+
 
 @router.post("/import")
 def import_hosts(body: dict, db: Session = Depends(get_db), _=Depends(require_role("admin"))):
@@ -131,6 +149,16 @@ def import_hosts(body: dict, db: Session = Depends(get_db), _=Depends(require_ro
         db.add(host)
         imported += 1
 
+    db.commit()
+
+    # Activity log
+    log_activity(db,
+        activity_type="discovery_import",
+        status="success",
+        message=f"Importação: {imported} novos, {skipped} já existiam",
+        details={"imported": imported, "skipped": skipped, "hostnames": hostnames[:20]},
+        source="manual",
+    )
     db.commit()
 
     return {

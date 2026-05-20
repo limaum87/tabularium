@@ -23,6 +23,7 @@ function loadLayout(activePage) {
         { section: 'Geral' },
         { id: 'dashboard', icon: '◫', label: 'Dashboard', href: '/dashboard.html' },
         { id: 'hosts', icon: '⊡', label: 'Hosts', href: '/hosts.html' },
+        { id: 'activity', icon: '◈', label: 'Atividades', href: '/activity.html' },
         { id: 'legacy', icon: '⊘', label: 'Micros Legados', href: '/legacy.html', badge: true },
         { section: 'Inventário' },
         { id: 'logged-users', icon: '⊙', label: 'Usuários Logados', href: '/logged-users.html' },

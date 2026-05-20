@@ -8,7 +8,7 @@ import subprocess
 from app.core.database import engine, Base, SessionLocal, User, Host
 from app.core.config import settings
 from app.core.security import hash_password
-from app.api import auth, users, hosts, reports, settings as settings_api, discovery
+from app.api import auth, users, hosts, reports, settings as settings_api, discovery, activity
 
 # ---- Background Ping Task ----
 
@@ -59,6 +59,21 @@ def _run_ping_sweep():
             host.last_ping = now
 
         db.commit()
+
+        # Activity log para ping sweep automático
+        try:
+            from app.api.activity import log_activity
+            log_activity(db,
+                activity_type="ping_sweep",
+                status="success",
+                message=f"Ping sweep automático: {online_count} online, {offline_count} offline de {len(active_hosts)} hosts",
+                details={"online": online_count, "offline": offline_count, "total": len(active_hosts)},
+                source="system",
+            )
+            db.commit()
+        except Exception as e:
+            print(f"[ping-sweep] Erro ao registrar log: {e}")
+
         print(f"[ping-sweep] {len(active_hosts)} hosts verificados — online: {online_count} | offline: {offline_count}")
     except Exception as e:
         print(f"[ping-sweep] Erro geral: {e}")
@@ -203,7 +218,7 @@ app.include_router(users.router)
 app.include_router(hosts.router)
 app.include_router(reports.router)
 app.include_router(settings_api.router)
-app.include_router(discovery.router)
+app.include_router(activity.router)
 
 
 # Health check
