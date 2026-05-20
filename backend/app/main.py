@@ -13,22 +13,30 @@ from app.api import auth, users, hosts, reports, settings as settings_api, disco
 # ---- Background Ping Task ----
 
 PING_INTERVAL = 300  # 5 minutos
+PING_LOG_INTERVAL = 3600  # log a cada 1 hora
 _ping_task = None
+_last_ping_log = None
 
 
 async def _ping_loop():
     """Background task: faz ping em todos os hosts a cada 5 minutos."""
+    global _last_ping_log
     while True:
         try:
             await asyncio.sleep(PING_INTERVAL)
-            _run_ping_sweep()
+            should_log = False
+            now_ts = asyncio.get_event_loop().time()
+            if _last_ping_log is None or (now_ts - _last_ping_log) >= PING_LOG_INTERVAL:
+                should_log = True
+                _last_ping_log = now_ts
+            _run_ping_sweep(log=should_log)
         except asyncio.CancelledError:
             break
         except Exception as e:
             print(f"[ping-sweep] Erro: {e}")
 
 
-def _run_ping_sweep():
+def _run_ping_sweep(log=False):
     """Pinga todos os hosts ativos e atualiza ping_status."""
     from datetime import datetime
     db = SessionLocal()
@@ -60,19 +68,20 @@ def _run_ping_sweep():
 
         db.commit()
 
-        # Activity log para ping sweep automático
-        try:
-            from app.api.activity import log_activity
-            log_activity(db,
-                activity_type="ping_sweep",
-                status="success",
-                message=f"Ping sweep automático: {online_count} online, {offline_count} offline de {len(active_hosts)} hosts",
-                details={"online": online_count, "offline": offline_count, "total": len(active_hosts)},
-                source="system",
-            )
-            db.commit()
-        except Exception as e:
-            print(f"[ping-sweep] Erro ao registrar log: {e}")
+        # Activity log para ping sweep automático (apenas quando log=True)
+        if log:
+            try:
+                from app.api.activity import log_activity
+                log_activity(db,
+                    activity_type="ping_sweep",
+                    status="success",
+                    message=f"Ping sweep automático: {online_count} online, {offline_count} offline de {len(active_hosts)} hosts",
+                    details={"online": online_count, "offline": offline_count, "total": len(active_hosts)},
+                    source="system",
+                )
+                db.commit()
+            except Exception as e:
+                print(f"[ping-sweep] Erro ao registrar log: {e}")
 
         print(f"[ping-sweep] {len(active_hosts)} hosts verificados — online: {online_count} | offline: {offline_count}")
     except Exception as e:
