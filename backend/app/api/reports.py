@@ -75,6 +75,50 @@ def list_scans(limit: int = 50, db: Session = Depends(get_db), _=Depends(get_cur
     ]
 
 
+@router.get("/api/os-versions")
+def os_versions(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Distribuição de versões de SO (Windows editions + Linux)."""
+    _auto_legacy_check(db)
+
+    active_host_ids = [h.id for h in db.query(Host).filter(Host.is_legacy == False).all()]
+
+    # Windows — agrupa por edition + version da licença
+    rows = (
+        db.query(
+            HostLicense.edition,
+            HostLicense.version,
+            func.count(HostLicense.id).label("count"),
+        )
+        .filter(
+            HostLicense.product == "windows",
+            HostLicense.host_id.in_(active_host_ids),
+        )
+        .group_by(HostLicense.edition, HostLicense.version)
+        .order_by(func.count(HostLicense.id).desc())
+        .all()
+    )
+
+    result = []
+    for r in rows:
+        label = r.edition or "Desconhecido"
+        if r.version:
+            label = f"{label} ({r.version})"
+        result.append({"os": label, "count": r.count})
+
+    # Hosts sem licença Windows (provável Linux)
+    hosts_with_win_lic = set(
+        r2.host_id for r2 in
+        db.query(HostLicense.host_id)
+        .filter(HostLicense.product == "windows", HostLicense.host_id.in_(active_host_ids))
+        .all()
+    )
+    linux_count = len(active_host_ids) - len(hosts_with_win_lic)
+    if linux_count > 0:
+        result.append({"os": "Linux", "count": linux_count})
+
+    return result
+
+
 @router.get("/api/compliance")
 def compliance(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Resumo de compliance de licenças."""

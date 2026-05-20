@@ -5,7 +5,7 @@
 Você DEVE se identificar com um nome de agente fixo.
 
 Defina internamente:
-Agent name: Gohan
+Agent name: GOHAN
 
 Esse nome DEVE ser utilizado em todas as notificações.
 
@@ -58,7 +58,7 @@ Isso inclui obrigatoriamente:
 
 O título DEVE seguir EXATAMENTE este padrão:
 
-[STATUS][AGENTE] nome-da-tarefa
+[STATUS] nome-da-tarefa
 
 Onde:
 
@@ -67,8 +67,6 @@ STATUS:
 - [ERRO]
 - [AGUARDANDO]
 
-AGENTE:
-- nome do agente atual (Gohan)
 
 nome-da-tarefa:
 - identificador curto da tarefa
@@ -77,9 +75,9 @@ nome-da-tarefa:
 
 ## Exemplos de título
 
-[OK][CLAUDE] build-falcon
-[ERRO][CODEX] deploy-api
-[AGUARDANDO][GEMINI] parser-xls
+[OK] build-falcon
+[ERRO] deploy-api
+[AGUARDANDO] parser-xls
 
 ---
 
@@ -96,24 +94,30 @@ A mensagem DEVE conter:
 ## Exemplos
 
 ### Sucesso
-curl -H "Title: [OK][CLAUDE] build-falcon" \
+curl -H "Title: [OK] build-falcon" \
      -H "Priority: high" \
+     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/gohan.png" \
+     -H "User: GOHAN" \
      -d "Tarefa: build-falcon. Build concluído com sucesso." \
      https://ntfy.sh/lemonagents
 
 ---
 
 ### Erro
-curl -H "Title: [ERRO][CODEX] deploy-api" \
+curl -H "Title: [ERRO] deploy-api" \
      -H "Priority: high" \
+     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/gohan.png" \
+     -H "User: GOHAN" \
      -d "Tarefa: deploy-api. Falha durante migration do banco." \
      https://ntfy.sh/lemonagents
 
 ---
 
 ### Aguardando usuário
-curl -H "Title: [AGUARDANDO][GEMINI] parser-xls" \
+curl -H "Title: [AGUARDANDO] parser-xls" \
      -H "Priority: urgent" \
+     -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/gohan.png" \
+     -H "User: GOHAN" \
      -d "Tarefa: parser-xls. Preciso da sua decisão sobre linhas inválidas." \
      https://ntfy.sh/lemonagents
 

@@ -51,7 +51,7 @@ class APIClient:
         return False
 
     def send_scan_result(self, hostname, status, message=None):
-        """Registra resultado de scan diretamente (offline, erro).
+        """Registra resultado de scan diretamente (offline, erro, linux).
 
         Usa o mesmo endpoint de checkin com dados mínimos.
         """
@@ -63,4 +63,17 @@ class APIClient:
         # Marca como offline no host
         if status == "offline":
             data["hardware"] = None
+        return self.send_checkin(data)
+
+    def send_linux_checkin(self, hostname, message=None):
+        """Registra um host como Linux detectado via porta SSH.
+
+        Envia checkin com status 'linux' e so_type 'linux'.
+        """
+        data = {
+            "hostname": hostname,
+            "status": "linux",
+            "so_type": "linux",
+            "message": message or "Detectado via porta SSH (22). WinRM indisponível.",
+        }
         return self.send_checkin(data)

@@ -26,6 +26,15 @@ ping:
   enabled: true
   timeout: 3              # segundos
 
+# ---- Teste de portas ----
+port_check:
+  enabled: true
+  timeout: 5              # segundos por porta
+  winrm_scheme: "http"    # mesmo scheme do WinRM
+  # Portas customizadas (vazio = padrão)
+  winrm_port: null        # null = usa 5985/5986 conforme scheme
+  ssh_port: null          # null = usa 22
+
 # ---- API Backend ----
 api:
   url: "http://localhost:8091"
