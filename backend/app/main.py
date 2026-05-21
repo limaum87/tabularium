@@ -31,15 +31,15 @@ async def _ping_loop():
     global _last_ping_log, _next_ping_at
     while True:
         try:
-            from datetime import datetime as dt
-            _next_ping_at = dt.utcnow() + timedelta(seconds=PING_INTERVAL)
+            _next_ping_at = datetime.utcnow() + timedelta(seconds=PING_INTERVAL)
             await asyncio.sleep(PING_INTERVAL)
             should_log = False
             now_ts = asyncio.get_event_loop().time()
             if _last_ping_log is None or (now_ts - _last_ping_log) >= PING_LOG_INTERVAL:
                 should_log = True
                 _last_ping_log = now_ts
-            _run_ping_sweep(log=should_log)
+            # Roda em thread pool para não bloquear o event loop
+            await asyncio.to_thread(_run_ping_sweep, should_log)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -174,8 +174,8 @@ def _run_auto_collect():
         for host in active_hosts:
             target = _make_fqdn(host.hostname, cfg.get("search", ""))
             try:
-                session = _connect(target, cfg, operation_timeout_sec=60, read_timeout_sec=90)
-                # Teste rápido
+                session = _connect(target, cfg, operation_timeout_sec=15, read_timeout_sec=20)
+                # Teste rápido com timeout curto
                 test = session.run_ps("Write-Output 'OK'")
                 if test.status_code != 0:
                     raise RuntimeError("WinRM não respondeu")
@@ -362,8 +362,7 @@ async def _collect_loop():
     """Background task: coleta automática de dados via WinRM."""
     global _last_collect_log, _next_collect_at
     # Espera um pouco antes da primeira coleta (deixa o sistema estabilizar)
-    from datetime import datetime as dt
-    _next_collect_at = dt.utcnow() + timedelta(seconds=COLLECT_STARTUP_DELAY)
+    _next_collect_at = datetime.utcnow() + timedelta(seconds=COLLECT_STARTUP_DELAY)
     await asyncio.sleep(COLLECT_STARTUP_DELAY)
 
     while True:
@@ -372,19 +371,26 @@ async def _collect_loop():
             cfg = _get_collect_settings()
             interval = cfg["interval_hours"] * 3600 if cfg else COLLECT_INTERVAL
 
-            # Executa coleta se tiver credenciais
+            # Executa coleta se tiver credenciais — RODA EM THREAD POOL
+            # Timeout total: 2 minutos por host, máximo 3 horas para tudo
             if cfg:
-                _run_auto_collect()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(_run_auto_collect),
+                        timeout=10800  # 3 horas max
+                    )
+                except asyncio.TimeoutError:
+                    print("[collect-auto] Timeout geral (3h) — coleta abortada")
             else:
                 print("[collect-auto] Credenciais WinRM não configuradas. Pulando coleta automática.")
 
-            _next_collect_at = dt.utcnow() + timedelta(seconds=interval)
+            _next_collect_at = datetime.utcnow() + timedelta(seconds=interval)
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
             break
         except Exception as e:
             print(f"[collect-auto] Erro no loop: {e}")
-            _next_collect_at = dt.utcnow() + timedelta(seconds=300)
+            _next_collect_at = datetime.utcnow() + timedelta(seconds=300)
             await asyncio.sleep(300)  # tenta de novo em 5min
 
 

@@ -41,7 +41,7 @@ def _make_fqdn(hostname, search):
     return hostname
 
 
-def _connect(hostname, cfg, operation_timeout_sec=60, read_timeout_sec=90):
+def _connect(hostname, cfg, operation_timeout_sec=15, read_timeout_sec=20):
     """Cria sessão WinRM."""
     endpoint = f"{cfg['scheme']}://{hostname}:{cfg['port']}"
     return winrm.Session(

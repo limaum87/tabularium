@@ -346,7 +346,7 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
         target = _make_fqdn(host.hostname, cfg.get("search", ""))
         try:
             yield sse({"type": "step", "step": "connect", "message": f"Conectando em {target}..."})
-            session = _connect(target, cfg, operation_timeout_sec=60, read_timeout_sec=90)
+            session = _connect(target, cfg, operation_timeout_sec=15, read_timeout_sec=20)
             # Teste rápido
             result = session.run_ps("Write-Output 'OK'")
             if result.status_code != 0:
@@ -442,11 +442,11 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
         # ---- LICENÇAS (timeout controlado por step) ----
         yield sse({"type": "step", "step": "licenses", "message": "🔑 Coletando licenças..."})
         try:
-            lic_session = _connect(target, cfg, operation_timeout_sec=45, read_timeout_sec=60)
+            lic_session = _connect(target, cfg, operation_timeout_sec=20, read_timeout_sec=25)
             licenses = []
             for ps_func, label in [(_ps_windows_license, "windows"), (_ps_office_license, "office")]:
                 try:
-                    raw = _run_ps_with_timeout(lic_session, ps_func(), label=f"license-{label}", timeout_sec=45)
+                    raw = _run_ps_with_timeout(lic_session, ps_func(), label=f"license-{label}", timeout_sec=20)
                     parsed = _safe_json(raw, f"license-{label}")
                     if parsed:
                         if isinstance(parsed, list):
