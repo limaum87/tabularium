@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 import os
 import asyncio
 import subprocess
+from datetime import datetime, timedelta
 
 from app.core.database import engine, Base, SessionLocal, User, Host
 from app.core.config import settings
@@ -21,13 +22,17 @@ _ping_task = None
 _collect_task = None
 _last_ping_log = None
 _last_collect_log = None
+_next_ping_at = None       # datetime da próxima execução de ping sweep
+_next_collect_at = None    # datetime da próxima execução de coleta automática
 
 
 async def _ping_loop():
     """Background task: faz ping em todos os hosts a cada 5 minutos."""
-    global _last_ping_log
+    global _last_ping_log, _next_ping_at
     while True:
         try:
+            from datetime import datetime as dt
+            _next_ping_at = dt.utcnow() + timedelta(seconds=PING_INTERVAL)
             await asyncio.sleep(PING_INTERVAL)
             should_log = False
             now_ts = asyncio.get_event_loop().time()
@@ -355,8 +360,10 @@ def _run_auto_collect():
 
 async def _collect_loop():
     """Background task: coleta automática de dados via WinRM."""
-    global _last_collect_log
+    global _last_collect_log, _next_collect_at
     # Espera um pouco antes da primeira coleta (deixa o sistema estabilizar)
+    from datetime import datetime as dt
+    _next_collect_at = dt.utcnow() + timedelta(seconds=COLLECT_STARTUP_DELAY)
     await asyncio.sleep(COLLECT_STARTUP_DELAY)
 
     while True:
@@ -371,11 +378,13 @@ async def _collect_loop():
             else:
                 print("[collect-auto] Credenciais WinRM não configuradas. Pulando coleta automática.")
 
+            _next_collect_at = dt.utcnow() + timedelta(seconds=interval)
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
             break
         except Exception as e:
             print(f"[collect-auto] Erro no loop: {e}")
+            _next_collect_at = dt.utcnow() + timedelta(seconds=300)
             await asyncio.sleep(300)  # tenta de novo em 5min
 
 

@@ -11,6 +11,55 @@ from app.core.security import get_current_user
 router = APIRouter(prefix="/api/activity", tags=["activity"])
 
 
+# ---- Endpoint: próximas execuções ----
+
+@router.get("/next-runs")
+def next_runs(_=Depends(get_current_user)):
+    """Retorna quando serão as próximas execuções das tasks de background."""
+    from app.main import _next_ping_at, _next_collect_at, PING_INTERVAL, COLLECT_INTERVAL
+    from datetime import datetime
+
+    now = datetime.utcnow()
+
+    # Coleta automática — verifica se está habilitada
+    from app.core.database import SessionLocal, Setting
+    db = SessionLocal()
+    try:
+        enabled = db.query(Setting).filter(Setting.key == "enabled", Setting.category == "schedule").first()
+        interval_h = db.query(Setting).filter(Setting.key == "interval_hours", Setting.category == "schedule").first()
+        winrm_user = db.query(Setting).filter(Setting.key == "username", Setting.category == "winrm").first()
+        schedule_enabled = enabled.value.strip().lower() not in ("false", "0", "no") if enabled else True
+        interval = int(interval_h.value) if interval_h and interval_h.value else 6
+        has_winrm = bool(winrm_user and winrm_user.value)
+    finally:
+        db.close()
+
+    collect_next = None
+    collect_status = "disabled"
+    if schedule_enabled and has_winrm:
+        collect_status = "running"
+        collect_next = _next_collect_at.isoformat() if _next_collect_at else None
+    elif not has_winrm:
+        collect_status = "no_credentials"
+    elif not schedule_enabled:
+        collect_status = "disabled"
+
+    return {
+        "ping_sweep": {
+            "next_at": _next_ping_at.isoformat() if _next_ping_at else None,
+            "interval_seconds": PING_INTERVAL,
+            "interval_label": f"a cada {PING_INTERVAL // 60} minutos",
+        },
+        "collect": {
+            "next_at": collect_next,
+            "interval_seconds": interval * 3600,
+            "interval_label": f"a cada {interval}h",
+            "status": collect_status,
+        },
+        "now": now.isoformat(),
+    }
+
+
 # ---- Helper para registrar atividades (usado por outros módulos) ----
 
 def log_activity(

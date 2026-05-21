@@ -422,19 +422,57 @@
         // Load schedule status
         async function loadScheduleStatus() {
             try {
-                const res = await apiFetch('/api/activity?limit=5&type=collector_checkin');
-                if (res && res.ok) {
-                    const data = await res.json();
-                    const el = document.getElementById('schedule-status');
-                    if (!el) return;
+                const el = document.getElementById('schedule-status');
+                if (!el) return;
+
+                // Busca última coleta
+                const [activityRes, nextRes] = await Promise.all([
+                    apiFetch('/api/activity?limit=1&type=collector_checkin'),
+                    apiFetch('/api/activity/next-runs'),
+                ]);
+
+                let lines = [];
+
+                // Última coleta
+                if (activityRes && activityRes.ok) {
+                    const data = await activityRes.json();
                     if (data.total > 0) {
                         const last = data.items[0];
                         const dt = last.created_at ? new Date(last.created_at).toLocaleString('pt-BR') : '—';
-                        el.innerHTML = `Última coleta automática: ${dt} — ${last.message || ''}`;
+                        lines.push(`<span style="color:var(--success);">✓</span> Última coleta: ${dt}`);
                     } else {
-                        el.innerHTML = 'Nenhuma coleta automática registrada ainda. Configure credenciais WinRM acima.';
+                        lines.push('Nenhuma coleta automática registrada');
                     }
                 }
+
+                // Próxima execução
+                if (nextRes && nextRes.ok) {
+                    const nr = await nextRes.json();
+                    const collect = nr.collect;
+                    const now = new Date(nr.now);
+
+                    if (collect.status === 'running' && collect.next_at) {
+                        const target = new Date(collect.next_at);
+                        const diff = Math.floor((target - now) / 1000);
+                        let countdown;
+                        if (diff <= 0) countdown = 'agora...';
+                        else if (diff < 60) countdown = `${diff}s`;
+                        else if (diff < 3600) countdown = `${Math.floor(diff/60)}min`;
+                        else {
+                            const h = Math.floor(diff/3600);
+                            const m = Math.floor((diff % 3600) / 60);
+                            countdown = `${h}h${m > 0 ? ' ' + m + 'min' : ''}`;
+                        }
+                        const timeStr = target.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                        lines.push(`<span style="color:var(--accent);">⏱</span> Próxima coleta: <strong>${timeStr}</strong> (em ${countdown}) · ${collect.interval_label}`);
+                    } else if (collect.status === 'no_credentials') {
+                        lines.push(`<span style="color:var(--warning);">⚠</span> Coleta pausada — configure credenciais WinRM acima`);
+                    } else {
+                        lines.push(`<span style="color:var(--text-muted);">⊘</span> Coleta automática desabilitada`);
+                    }
+                }
+
+                el.innerHTML = lines.join('<br>');
             } catch(e) {}
         }
 
@@ -443,6 +481,8 @@
         loadSettings = async function() {
             await origLoad();
             loadScheduleStatus();
+            // Atualiza a cada 30s
+            setInterval(loadScheduleStatus, 30000);
         };
         loadSettings();
     </script>

@@ -160,6 +160,73 @@
             color: var(--accent);
             background: var(--accent-dim);
         }
+
+        /* Next run banner */
+        .nextrun-banner {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .nextrun-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 18px 22px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+        .nextrun-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+        }
+        .nextrun-card.card-ping::before { background: var(--warning); }
+        .nextrun-card.card-collect::before { background: var(--accent); }
+        .nextrun-card .nr-icon {
+            font-size: 28px;
+            flex-shrink: 0;
+        }
+        .nextrun-card .nr-body { flex: 1; min-width: 0; }
+        .nextrun-card .nr-title {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .nextrun-card .nr-subtitle {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            margin-top: 2px;
+        }
+        .nextrun-card .nr-time {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .nextrun-card .nr-time.soon { color: var(--accent); }
+        .nextrun-card .nr-time.later { color: var(--text-secondary); }
+        .nextrun-card .nr-time.disabled { color: var(--text-muted); font-size: 12px; font-weight: 500; }
+        .nr-status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            margin-left: 8px;
+        }
+        .nr-status-badge.running { background: var(--success-dim); color: var(--success); }
+        .nr-status-badge.no_credentials { background: var(--warning-dim); color: var(--warning); }
+        .nr-status-badge.disabled { background: rgba(255,255,255,0.06); color: var(--text-muted); }
+        .nr-refresh { cursor: pointer; opacity: 0.5; transition: opacity 0.2s; }
+        .nr-refresh:hover { opacity: 1; }
     </style>
 </head>
 <body>
@@ -230,6 +297,9 @@
                 </div>
             </div>
             <div class="page-body">
+                <!-- Next Runs -->
+                <div class="nextrun-banner animate-in" id="nextrun-banner"></div>
+
                 <!-- Summary Cards -->
                 <div class="summary-grid" id="summary-grid"></div>
 
@@ -277,10 +347,99 @@
             // Load summary
             loadSummary();
 
+            // Load next runs
+            loadNextRuns();
+            // Refresh next runs a cada 30s
+            setInterval(loadNextRuns, 30000);
+
             // Load activity
             currentOffset = 0;
             allItems = [];
             loadItems();
+        }
+
+        async function loadNextRuns() {
+            try {
+                const res = await apiFetch('/api/activity/next-runs');
+                if (!res || !res.ok) return;
+                const data = await res.json();
+                const banner = document.getElementById('nextrun-banner');
+                if (!banner) return;
+
+                const now = new Date(data.now);
+
+                function formatCountdown(dateStr) {
+                    if (!dateStr) return { text: '—', cls: 'later' };
+                    const target = new Date(dateStr);
+                    const diff = Math.floor((target - now) / 1000);
+                    if (diff <= 0) return { text: 'agora...', cls: 'soon' };
+                    if (diff < 60) return { text: `${diff}s`, cls: 'soon' };
+                    if (diff < 3600) return { text: `${Math.floor(diff/60)}min`, cls: 'soon' };
+                    if (diff < 86400) {
+                        const h = Math.floor(diff/3600);
+                        const m = Math.floor((diff % 3600) / 60);
+                        return { text: `${h}h${m > 0 ? m + 'min' : ''}`, cls: 'later' };
+                    }
+                    return { text: `${Math.floor(diff/86400)}d`, cls: 'later' };
+                }
+
+                function formatTime(dateStr) {
+                    if (!dateStr) return '—';
+                    const d = new Date(dateStr);
+                    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                }
+
+                // Ping Sweep
+                const pingNext = formatCountdown(data.ping_sweep.next_at);
+                const pingTime = formatTime(data.ping_sweep.next_at);
+
+                // Coleta Auto
+                const collect = data.collect;
+                let collectHtml = '';
+                if (collect.status === 'running') {
+                    const collectNext = formatCountdown(collect.next_at);
+                    const collectTime = formatTime(collect.next_at);
+                    collectHtml = `
+                        <span class="nr-time ${collectNext.cls}">${collectNext.text}</span>
+                        <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);display:block;margin-top:2px;">${collectTime} · ${collect.interval_label}</span>`;
+                } else if (collect.status === 'no_credentials') {
+                    collectHtml = `<span class="nr-time disabled">⚠ Sem credenciais WinRM</span>
+                        <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);display:block;margin-top:2px;">Configure em Configurações</span>`;
+                } else {
+                    collectHtml = `<span class="nr-time disabled">Desabilitada</span>`;
+                }
+
+                const statusLabel = {
+                    running: { text: 'Ativo', cls: 'running' },
+                    no_credentials: { text: 'Sem Credenciais', cls: 'no_credentials' },
+                    disabled: { text: 'Desabilitado', cls: 'disabled' },
+                };
+                const cs = statusLabel[collect.status] || statusLabel.disabled;
+
+                banner.innerHTML = `
+                    <div class="nextrun-card card-ping">
+                        <div class="nr-icon">📡</div>
+                        <div class="nr-body">
+                            <div class="nr-title">Ping Sweep <span class="nr-status-badge running">Ativo</span></div>
+                            <div class="nr-subtitle">${data.ping_sweep.interval_label}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <span class="nr-time ${pingNext.cls}">${pingNext.text}</span>
+                            <span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);display:block;margin-top:2px;">${pingTime}</span>
+                        </div>
+                    </div>
+                    <div class="nextrun-card card-collect">
+                        <div class="nr-icon">🔄</div>
+                        <div class="nr-body">
+                            <div class="nr-title">Coleta Automática <span class="nr-status-badge ${cs.cls}">${cs.text}</span></div>
+                            <div class="nr-subtitle">${collect.interval_label}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            ${collectHtml}
+                        </div>
+                    </div>
+                `;
+            } catch(e) {}
         }
 
         async function loadSummary() {
