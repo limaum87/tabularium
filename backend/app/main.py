@@ -10,12 +10,17 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.api import auth, users, hosts, reports, settings as settings_api, discovery, activity
 
-# ---- Background Ping Task ----
+# ---- Background Tasks ----
 
 PING_INTERVAL = 300  # 5 minutos
 PING_LOG_INTERVAL = 3600  # log a cada 1 hora
+COLLECT_INTERVAL = 21600  # 6 horas (padrão, pode ser alterado no banco)
+COLLECT_STARTUP_DELAY = 60  # espera 60s antes da primeira coleta
+
 _ping_task = None
+_collect_task = None
 _last_ping_log = None
+_last_collect_log = None
 
 
 async def _ping_loop():
@@ -90,26 +95,316 @@ def _run_ping_sweep(log=False):
         db.close()
 
 
+# ---- Coleta automática background ----
+
+def _get_collect_settings():
+    """Lê settings de coleta do banco. Retorna dict ou None se não configurado."""
+    from app.core.database import Setting
+    db = SessionLocal()
+    try:
+        winrm_user = db.query(Setting).filter(Setting.key == "username", Setting.category == "winrm").first()
+        winrm_pass = db.query(Setting).filter(Setting.key == "password", Setting.category == "winrm").first()
+        winrm_scheme = db.query(Setting).filter(Setting.key == "scheme", Setting.category == "winrm").first()
+        winrm_port = db.query(Setting).filter(Setting.key == "port", Setting.category == "winrm").first()
+        dns_search = db.query(Setting).filter(Setting.key == "search_domain", Setting.category == "dns").first()
+        interval_setting = db.query(Setting).filter(Setting.key == "interval_hours", Setting.category == "schedule").first()
+        enabled_setting = db.query(Setting).filter(Setting.key == "enabled", Setting.category == "schedule").first()
+
+        # Verifica se está habilitado
+        if enabled_setting and enabled_setting.value.strip().lower() in ("false", "0", "no"):
+            return None
+
+        if not winrm_user or not winrm_pass:
+            return None
+
+        scheme = winrm_scheme.value if winrm_scheme else "http"
+        port = int(winrm_port.value) if winrm_port and winrm_port.value else 5985
+        search = dns_search.value.strip() if dns_search and dns_search.value else ""
+        interval_h = int(interval_setting.value) if interval_setting and interval_setting.value else 6
+
+        return {
+            "username": winrm_user.value,
+            "password": winrm_pass.value,
+            "scheme": scheme,
+            "port": port,
+            "search": search,
+            "interval_hours": max(1, interval_h),
+        }
+    except Exception as e:
+        print(f"[collect-auto] Erro ao ler settings: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def _run_auto_collect():
+    """Executa coleta automática em todos os hosts ativos."""
+    from datetime import datetime
+    from app.core.database import HostHardware, HostDisk, HostNetwork, HostLicense, HostSoftware, HostRemoteAccess, ScanHistory
+    from app.api.activity import log_activity
+    from app.collector.winrm_collect import collect_host, _make_fqdn, _connect, _run_ps, _safe_json
+    from app.collector.winrm_collect import (
+        _ps_hardware, _ps_disks, _ps_network,
+        _ps_windows_license, _ps_office_license, _ps_software,
+        _ps_anydesk, _ps_ultravnc,
+    )
+    import json as json_mod
+
+    cfg = _get_collect_settings()
+    if not cfg:
+        return
+
+    db = SessionLocal()
+    try:
+        active_hosts = db.query(Host).filter(Host.is_legacy == False).all()
+        if not active_hosts:
+            print("[collect-auto] Nenhum host ativo para coletar")
+            return
+
+        now = datetime.utcnow()
+        stats = {"collected": 0, "offline": 0, "errors": 0}
+
+        print(f"[collect-auto] Iniciando coleta de {len(active_hosts)} hosts...")
+
+        for host in active_hosts:
+            target = _make_fqdn(host.hostname, cfg.get("search", ""))
+            try:
+                session = _connect(target, cfg, operation_timeout_sec=60, read_timeout_sec=90)
+                # Teste rápido
+                test = session.run_ps("Write-Output 'OK'")
+                if test.status_code != 0:
+                    raise RuntimeError("WinRM não respondeu")
+            except Exception as e:
+                stats["offline"] += 1
+                log_activity(db, activity_type="collector_checkin", hostname=host.hostname, host_id=host.id,
+                             status="offline", message=f"Coleta auto: {host.hostname} offline — {str(e)[:80]}", source="system")
+                continue
+
+            # Atualiza status do host
+            host_obj = db.query(Host).filter(Host.id == host.id).first()
+            host_obj.status = "online"
+            host_obj.last_seen = now
+            host_obj.updated_at = now
+            if host_obj.is_legacy:
+                host_obj.is_legacy = False
+                host_obj.legacy_since = None
+            db.commit()
+
+            host_id_val = host.id
+            total_success = 0
+            total_fail = 0
+
+            # HARDWARE
+            try:
+                raw = _run_ps(session, _ps_hardware())
+                hw = _safe_json(raw, "hardware")
+                if hw:
+                    existing = db.query(HostHardware).filter(HostHardware.host_id == host_id_val).first()
+                    hw_data = {
+                        "manufacturer": hw.get("manufacturer"), "model": hw.get("model"),
+                        "serial": hw.get("serial"), "cpu": hw.get("cpu"),
+                        "ram_gb": hw.get("ram_gb"), "bios_version": hw.get("bios_version"),
+                        "last_boot": hw.get("last_boot"), "last_user": hw.get("last_user"),
+                        "updated_at": now,
+                    }
+                    if existing:
+                        for k, v in hw_data.items():
+                            setattr(existing, k, v)
+                    else:
+                        db.add(HostHardware(host_id=host_id_val, **hw_data))
+                    db.commit()
+                    total_success += 1
+            except Exception:
+                total_fail += 1
+
+            # DISCOS
+            try:
+                raw = _run_ps(session, _ps_disks())
+                parsed = _safe_json(raw, "disks")
+                disks = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+                db.query(HostDisk).filter(HostDisk.host_id == host_id_val).delete()
+                for d in disks:
+                    db.add(HostDisk(host_id=host_id_val, drive=d.get("drive"), total_gb=d.get("total_gb"),
+                                    free_gb=d.get("free_gb"), filesystem=d.get("filesystem"), updated_at=now))
+                db.commit()
+                total_success += 1
+            except Exception:
+                total_fail += 1
+
+            # REDE
+            try:
+                raw = _run_ps(session, _ps_network())
+                parsed = _safe_json(raw, "network")
+                network = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+                db.query(HostNetwork).filter(HostNetwork.host_id == host_id_val).delete()
+                for n in network:
+                    db.add(HostNetwork(host_id=host_id_val, ip=n.get("ip"), mac=n.get("mac"),
+                                       gateway=n.get("gateway"), dns=n.get("dns"),
+                                       adapter_name=n.get("adapter_name"), updated_at=now))
+                db.commit()
+                total_success += 1
+            except Exception:
+                total_fail += 1
+
+            # LICENÇAS
+            try:
+                licenses = []
+                for ps_func, label in [(_ps_windows_license, "windows"), (_ps_office_license, "office")]:
+                    try:
+                        raw = _run_ps(session, ps_func())
+                        parsed = _safe_json(raw, f"license-{label}")
+                        if parsed:
+                            if isinstance(parsed, list):
+                                licenses.extend(parsed)
+                            else:
+                                licenses.append(parsed)
+                    except Exception:
+                        pass
+                db.query(HostLicense).filter(HostLicense.host_id == host_id_val).delete()
+                for lic in licenses:
+                    db.add(HostLicense(host_id=host_id_val, product=lic.get("product", "windows"),
+                                       edition=lic.get("edition"), version=lic.get("version"),
+                                       channel=lic.get("channel"), license_status=lic.get("license_status"),
+                                       partial_product_key=lic.get("partial_product_key"),
+                                       oem_key_found=lic.get("oem_key_found"),
+                                       click_to_run=lic.get("click_to_run"),
+                                       detection_method=lic.get("detection_method"), updated_at=now))
+                db.commit()
+                total_success += 1
+            except Exception:
+                total_fail += 1
+
+            # SOFTWARE
+            try:
+                raw = _run_ps(session, _ps_software())
+                parsed = _safe_json(raw, "software")
+                software = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+                db.query(HostSoftware).filter(HostSoftware.host_id == host_id_val).delete()
+                for sw in software:
+                    db.add(HostSoftware(host_id=host_id_val, name=sw.get("name"), version=sw.get("version"),
+                                        publisher=sw.get("publisher"), install_date=sw.get("install_date"),
+                                        install_location=sw.get("install_location"), updated_at=now))
+                db.commit()
+                total_success += 1
+            except Exception:
+                total_fail += 1
+
+            # ACESSO REMOTO
+            try:
+                ra_data = {"anydesk_id": None, "anydesk_alias": "", "anydesk_version": "",
+                           "ultravnc_installed": False, "ultravnc_port": None, "ultravnc_version": "", "updated_at": now}
+                try:
+                    raw = _run_ps(session, _ps_anydesk())
+                    ad = _safe_json(raw, "anydesk")
+                    if ad:
+                        ra_data["anydesk_id"] = ad.get("anydesk_id")
+                        ra_data["anydesk_alias"] = ad.get("anydesk_alias", "")
+                        ra_data["anydesk_version"] = ad.get("anydesk_version", "")
+                except Exception:
+                    pass
+                try:
+                    raw = _run_ps(session, _ps_ultravnc())
+                    uv = _safe_json(raw, "ultravnc")
+                    if uv:
+                        ra_data["ultravnc_installed"] = uv.get("installed", False)
+                        ra_data["ultravnc_port"] = uv.get("port")
+                        ra_data["ultravnc_version"] = uv.get("version", "")
+                except Exception:
+                    pass
+                existing_ra = db.query(HostRemoteAccess).filter(HostRemoteAccess.host_id == host_id_val).first()
+                if existing_ra:
+                    for k, v in ra_data.items():
+                        setattr(existing_ra, k, v)
+                else:
+                    db.add(HostRemoteAccess(host_id=host_id_val, **ra_data))
+                db.commit()
+                total_success += 1
+            except Exception:
+                total_fail += 1
+
+            # Scan history
+            db.add(ScanHistory(host_id=host_id_val, hostname=host.hostname, status="success",
+                               started_at=now, finished_at=datetime.utcnow()))
+
+            log_activity(db, activity_type="collector_checkin", hostname=host.hostname, host_id=host_id_val,
+                         status="success" if total_fail == 0 else "partial",
+                         message=f"Coleta auto: {host.hostname} — {total_success} OK, {total_fail} falha(s)",
+                         details={"success": total_success, "fail": total_fail},
+                         source="system")
+            db.commit()
+            stats["collected"] += 1
+
+        # Log geral da rodada
+        msg = f"Coleta automática concluída: {stats['collected']} coletados, {stats['offline']} offline, {stats['errors']} erros"
+        log_activity(db, activity_type="collector_checkin", status="success", message=msg,
+                     details=stats, source="system")
+        db.commit()
+        print(f"[collect-auto] {msg}")
+
+    except Exception as e:
+        print(f"[collect-auto] Erro geral: {e}")
+        try:
+            log_activity(db, activity_type="collector_checkin", status="error",
+                         message=f"Coleta automática falhou: {str(e)[:200]}", source="system")
+            db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+async def _collect_loop():
+    """Background task: coleta automática de dados via WinRM."""
+    global _last_collect_log
+    # Espera um pouco antes da primeira coleta (deixa o sistema estabilizar)
+    await asyncio.sleep(COLLECT_STARTUP_DELAY)
+
+    while True:
+        try:
+            # Lê intervalo do banco
+            cfg = _get_collect_settings()
+            interval = cfg["interval_hours"] * 3600 if cfg else COLLECT_INTERVAL
+
+            # Executa coleta se tiver credenciais
+            if cfg:
+                _run_auto_collect()
+            else:
+                print("[collect-auto] Credenciais WinRM não configuradas. Pulando coleta automática.")
+
+            await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[collect-auto] Erro no loop: {e}")
+            await asyncio.sleep(300)  # tenta de novo em 5min
+
+
 # ---- Lifespan ----
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Cria tabelas, faz seed do admin, aplica DNS e inicia ping sweep."""
+    """Cria tabelas, faz seed do admin, aplica DNS e inicia tasks de background."""
     Base.metadata.create_all(bind=engine)
     _migrate_db()
     _seed_admin()
     _apply_dns_from_db()
 
     # Inicia background ping task
-    global _ping_task
+    global _ping_task, _collect_task
     _ping_task = asyncio.create_task(_ping_loop())
     print(f"[ping-sweep] Iniciado — intervalo: {PING_INTERVAL}s")
 
+    # Inicia background collect task
+    _collect_task = asyncio.create_task(_collect_loop())
+    print(f"[collect-auto] Iniciado — intervalo padrão: {COLLECT_INTERVAL}s")
+
     yield
 
-    # Cancela task ao desligar
+    # Cancela tasks ao desligar
     if _ping_task:
         _ping_task.cancel()
+    if _collect_task:
+        _collect_task.cancel()
 
 
 def _migrate_db():
@@ -156,6 +451,16 @@ def _seed_admin():
             db.add(admin)
             db.commit()
             print(f"[seed] Admin criado: {settings.ADMIN_EMAIL}")
+
+        # Garante settings de schedule padrão
+        from app.core.database import Setting
+        sched_enabled = db.query(Setting).filter(Setting.key == "enabled", Setting.category == "schedule").first()
+        if not sched_enabled:
+            db.add(Setting(key="enabled", value="true", category="schedule"))
+        sched_interval = db.query(Setting).filter(Setting.key == "interval_hours", Setting.category == "schedule").first()
+        if not sched_interval:
+            db.add(Setting(key="interval_hours", value="6", category="schedule"))
+        db.commit()
     finally:
         db.close()
 

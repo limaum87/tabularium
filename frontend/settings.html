@@ -138,11 +138,19 @@
                 <!-- Agendamento -->
                 <div class="panel animate-in animate-in-delay-2" style="margin-bottom:20px;">
                     <div class="panel-header">
-                        <span class="panel-title">Agendamento do Collector</span>
+                        <span class="panel-title">⏱ Agendamento do Collector</span>
                         <button class="btn-primary-accent" onclick="saveSchedule()" style="padding:8px 18px;font-size:12px;">Salvar</button>
                     </div>
                     <div class="panel-body" style="padding:24px;">
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                        <div id="schedule-alert"></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+                            <div>
+                                <label class="form-label-dark">Coleta Automática</label>
+                                <select class="form-control-dark" id="schedule-enabled">
+                                    <option value="true">Habilitada</option>
+                                    <option value="false">Desabilitada</option>
+                                </select>
+                            </div>
                             <div>
                                 <label class="form-label-dark">Intervalo de Coleta (horas)</label>
                                 <input type="number" class="form-control-dark" id="schedule-interval" value="6" min="1" max="168">
@@ -152,6 +160,7 @@
                                 <input type="number" class="form-control-dark" id="ping-timeout" value="3" min="1" max="30">
                             </div>
                         </div>
+                        <div id="schedule-status" style="margin-top:12px;font-size:12px;color:var(--text-muted);font-family:var(--font-mono);"></div>
                     </div>
                 </div>
             </div>
@@ -184,6 +193,7 @@
                 // Schedule
                 if (data.schedule) {
                     if (data.schedule.interval_hours) document.getElementById('schedule-interval').value = data.schedule.interval_hours;
+                    if (data.schedule.enabled !== undefined) document.getElementById('schedule-enabled').value = String(data.schedule.enabled);
                 }
                 if (data.ping) {
                     if (data.ping.timeout) document.getElementById('ping-timeout').value = data.ping.timeout;
@@ -394,16 +404,46 @@
         async function saveSchedule() {
             const interval = parseInt(document.getElementById('schedule-interval').value) || 6;
             const pingTimeout = parseInt(document.getElementById('ping-timeout').value) || 3;
+            const enabled = document.getElementById('schedule-enabled').value;
 
             await saveSettingsBatch([
                 { key: 'interval_hours', value: String(interval), category: 'schedule' },
+                { key: 'enabled', value: enabled, category: 'schedule' },
                 { key: 'timeout', value: String(pingTimeout), category: 'ping' },
             ]);
 
-            alertBox('ldap-alert', true, '✓ Configurações de agendamento salvas');
-            setTimeout(() => { document.getElementById('ldap-alert').style.display = 'none'; }, 3000);
+            const statusMsg = enabled === 'true'
+                ? `✓ Coleta automática habilitada — a cada ${interval}h`
+                : '✓ Coleta automática desabilitada';
+            alertBox('schedule-alert', true, statusMsg);
+            setTimeout(() => { document.getElementById('schedule-alert').style.display = 'none'; }, 5000);
         }
 
+        // Load schedule status
+        async function loadScheduleStatus() {
+            try {
+                const res = await apiFetch('/api/activity?limit=5&type=collector_checkin');
+                if (res && res.ok) {
+                    const data = await res.json();
+                    const el = document.getElementById('schedule-status');
+                    if (!el) return;
+                    if (data.total > 0) {
+                        const last = data.items[0];
+                        const dt = last.created_at ? new Date(last.created_at).toLocaleString('pt-BR') : '—';
+                        el.innerHTML = `Última coleta automática: ${dt} — ${last.message || ''}`;
+                    } else {
+                        el.innerHTML = 'Nenhuma coleta automática registrada ainda. Configure credenciais WinRM acima.';
+                    }
+                }
+            } catch(e) {}
+        }
+
+        // Carrega status do schedule junto com settings
+        const origLoad = loadSettings;
+        loadSettings = async function() {
+            await origLoad();
+            loadScheduleStatus();
+        };
         loadSettings();
     </script>
 </body>
