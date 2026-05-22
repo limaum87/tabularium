@@ -101,13 +101,6 @@ def run_discovery(db: Session = Depends(get_db), _=Depends(require_role("admin")
             "status": "existing" if in_db else "new",
         })
 
-    return {
-        "total": len(result),
-        "new_count": sum(1 for h in result if h["status"] == "new"),
-        "existing_count": sum(1 for h in result if h["status"] == "existing"),
-        "hosts": result,
-    }
-
     # Activity log
     log_activity(db,
         activity_type="discovery_run",

@@ -45,11 +45,43 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
     host = db.query(Host).filter(Host.hostname == body.hostname).first()
     now = datetime.utcnow()
 
+    # ---- Determina status (conectividade) e so_type (tipo de SO) ----
+    # Regras de mapeamento a partir do que o collector envia:
+    #   - body.so_type presente        → usar diretamente
+    #   - body.hardware presente        → Windows confirmado (status=online, so_type=windows)
+    #   - body.status == "linux"        → Linux detectado via SSH (status=online, so_type=linux)
+    #   - body.status == "offline"      → offline, so_type mantém anterior
+    #   - body.status == "winrm_unavailable" → online mas SO desconhecido
+    #   - padrão                         → online, so_type mantém anterior
+
+    if body.so_type:
+        effective_so_type = body.so_type
+    elif body.hardware:
+        effective_so_type = "windows"
+    elif body.status == "linux":
+        effective_so_type = "linux"
+    else:
+        effective_so_type = None  # mantém o que já existe
+
+    if body.hardware:
+        effective_status = "online"
+    elif body.status == "linux":
+        effective_status = "online"  # está online (SSH respondeu)
+    elif body.status == "winrm_unavailable":
+        effective_status = "unknown"
+    elif body.status == "offline":
+        effective_status = "offline"
+    else:
+        effective_status = body.status if body.status else "online"
+
     if host:
         host.domain = body.domain or host.domain
-        host.status = "online"
+        host.status = effective_status
         host.last_seen = now
         host.updated_at = now
+        # Atualiza so_type se detectado
+        if effective_so_type:
+            host.so_type = effective_so_type
         # Se era legado, restaurar automaticamente ao fazer checkin
         if host.is_legacy:
             host.is_legacy = False
@@ -58,7 +90,8 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
         host = Host(
             hostname=body.hostname,
             domain=body.domain,
-            status="online",
+            status=effective_status,
+            so_type=effective_so_type or "unknown",
             last_seen=now,
         )
         db.add(host)
@@ -360,6 +393,7 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
         # Atualiza status
         host_obj = db.query(Host).filter(Host.id == host_id_val).first()
         host_obj.status = "online"
+        host_obj.so_type = "windows"
         host_obj.last_seen = datetime.utcnow()
         host_obj.updated_at = datetime.utcnow()
         if host_obj.is_legacy:
@@ -717,6 +751,7 @@ def action_test_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(get
         stdout = result.std_out.decode("utf-8", errors="replace").strip()
         # Atualiza status e last_seen
         host.status = "online"
+        host.so_type = "windows"
         host.last_seen = datetime.utcnow()
         log_activity(db, activity_type="winrm_test", hostname=host.hostname, host_id=host_id, status="success", message=f"WinRM OK: {host.hostname}", source="manual")
         db.commit()
@@ -909,6 +944,7 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
 
         if result.returncode == 0 or "completed successfully" in output.lower() or "[+]" in output:
             host.status = "online"
+            host.so_type = "windows"
             host.last_seen = datetime.utcnow()
             db.commit()
             log_activity(db, activity_type="winrm_enable", hostname=host.hostname, host_id=host_id, status="success", message=f"WinRM ativado remotamente em {host.hostname}", source="manual")

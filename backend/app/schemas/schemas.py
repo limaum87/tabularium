@@ -66,6 +66,7 @@ class HostResponse(BaseModel):
     hostname: str
     domain: Optional[str] = None
     status: str
+    so_type: Optional[str] = "unknown"
     ping_status: Optional[str] = "unknown"
     last_ping: Optional[datetime] = None
     is_legacy: bool = False
@@ -128,6 +129,9 @@ class SoftwarePayload(BaseModel):
 class CheckinPayload(BaseModel):
     hostname: str
     domain: Optional[str] = None
+    status: Optional[str] = None
+    so_type: Optional[str] = None
+    message: Optional[str] = None
     hardware: Optional[HardwarePayload] = None
     disks: Optional[list[DiskPayload]] = None
     network: Optional[list[NetworkPayload]] = None

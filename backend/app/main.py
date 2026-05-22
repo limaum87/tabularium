@@ -188,6 +188,7 @@ def _run_auto_collect():
             # Atualiza status do host
             host_obj = db.query(Host).filter(Host.id == host.id).first()
             host_obj.status = "online"
+            host_obj.so_type = "windows"
             host_obj.last_seen = now
             host_obj.updated_at = now
             if host_obj.is_legacy:
@@ -428,13 +429,12 @@ def _migrate_db():
 
     conn = engine.connect()
     try:
-        # Migration 1: adicionar ping_status e last_ping na tabela hosts
         inspector = sqlalchemy.inspect(engine)
         columns = [col['name'] for col in inspector.get_columns('hosts')]
 
         if 'ping_status' not in columns:
             conn.execute(sqlalchemy.text(
-                "ALTER TABLE hosts ADD COLUMN ping_status ENUM('online','offline','unknown') DEFAULT 'unknown'"
+                "ALTER TABLE hosts ADD COLUMN ping_status VARCHAR(20) DEFAULT 'unknown'"
             ))
             print("[migration] Adicionado ping_status na tabela hosts")
 
@@ -443,6 +443,12 @@ def _migrate_db():
                 "ALTER TABLE hosts ADD COLUMN last_ping DATETIME DEFAULT NULL"
             ))
             print("[migration] Adicionado last_ping na tabela hosts")
+
+        if 'so_type' not in columns:
+            conn.execute(sqlalchemy.text(
+                "ALTER TABLE hosts ADD COLUMN so_type ENUM('windows','linux','unknown') DEFAULT 'unknown'"
+            ))
+            print("[migration] Adicionado so_type na tabela hosts")
 
         conn.commit()
     except Exception as e:

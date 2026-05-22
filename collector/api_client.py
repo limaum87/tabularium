@@ -63,6 +63,8 @@ class APIClient:
         # Marca como offline no host
         if status == "offline":
             data["hardware"] = None
+        elif status == "winrm_unavailable":
+            data["so_type"] = "unknown"
         return self.send_checkin(data)
 
     def send_linux_checkin(self, hostname, message=None):
