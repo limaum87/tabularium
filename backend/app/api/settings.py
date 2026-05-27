@@ -39,6 +39,14 @@ class WinrmTestInput(BaseModel):
     port: int = 5985
 
 
+class SshTestInput(BaseModel):
+    hostname: str
+    username: str
+    private_key: str
+    key_passphrase: str = ""
+    port: int = 22
+
+
 class DnsApplyInput(BaseModel):
     dns_servers: str  # IPs separados por vírgula, ex: "10.0.0.1,10.0.0.2"
     search_domain: str = ""  # ex: "empresa.local"
@@ -166,7 +174,61 @@ def test_winrm(body: WinrmTestInput, _=Depends(require_role("admin"))):
         }
 
 
-@router.post("/apply-dns")
+@router.post("/test-ssh")
+def test_ssh(body: SshTestInput, _=Depends(require_role("admin"))):
+    """Testa conexão SSH com um host Linux usando chave privada."""
+    try:
+        import paramiko
+        import io
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Biblioteca paramiko não instalada no backend")
+
+    if not body.private_key:
+        return {"success": False, "message": "Chave privada não informada", "hostname": body.hostname}
+
+    try:
+        # Carrega a chave privada
+        key_file = io.StringIO(body.private_key)
+        try:
+            pkey = paramiko.RSAKey.from_private_key(
+                key_file, password=body.key_passphrase or None
+            )
+        except paramiko.SSHException:
+            # Tenta Ed25519
+            key_file = io.StringIO(body.private_key)
+            pkey = paramiko.Ed25519Key.from_private_key(
+                key_file, password=body.key_passphrase or None
+            )
+
+        # Conecta
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            hostname=body.hostname,
+            port=body.port,
+            username=body.username,
+            pkey=pkey,
+            timeout=10,
+            look_for_keys=False,
+            allow_agent=False,
+        )
+
+        # Testa comando simples
+        _, stdout, _ = client.exec_command("uname -a", timeout=10)
+        output = stdout.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        return {
+            "success": True,
+            "message": f"SSH OK — {output}",
+            "hostname": body.hostname,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Falha SSH: {str(e)[:200]}",
+            "hostname": body.hostname,
+        }
 def apply_dns(body: DnsApplyInput, _=Depends(require_role("admin"))):
     """Aplica DNS customizado no /etc/resolv.conf do container."""
     import os

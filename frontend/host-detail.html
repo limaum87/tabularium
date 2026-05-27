@@ -128,8 +128,12 @@
             const data = await res.json();
             const h = data.host;
             const hw = data.hardware || {};
+            const distro = data.distro || null;
             const dt = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
             const badgeClass = h.status === 'online' ? 'badge-success' : h.status === 'offline' ? 'badge-danger' : 'badge-muted';
+            const soType = h.so_type || 'unknown';
+            const soIcon = soType === 'linux' ? '🐧' : soType === 'windows' ? '🪟' : '❓';
+            const soLabel = soType === 'linux' ? 'Linux' : soType === 'windows' ? 'Windows' : 'Desconhecido';
 
             mainContent.innerHTML = `
             <div class="page-header">
@@ -137,7 +141,7 @@
                     <a href="/hosts.html" style="color:var(--text-muted);font-size:20px;">←</a>
                     <div>
                         <h1>${h.hostname}</h1>
-                        <p class="page-subtitle">${h.domain || 'Sem domínio'} · 📡 Ping: <span class="badge-status ${h.ping_status === 'online' ? 'badge-success' : h.ping_status === 'offline' ? 'badge-danger' : 'badge-muted'}">${h.ping_status || '?'}</span> · 🔌 WinRM: <span class="badge-status ${badgeClass}">${h.status}</span> · Último contato: ${dt}</p>
+                        <p class="page-subtitle">${h.domain || 'Sem domínio'} · ${soIcon} SO: <span class="badge-status ${soType === 'linux' ? 'badge-success' : soType === 'windows' ? 'badge-success' : 'badge-muted'}">${soLabel}</span> · 📡 Ping: <span class="badge-status ${h.ping_status === 'online' ? 'badge-success' : h.ping_status === 'offline' ? 'badge-danger' : 'badge-muted'}">${h.ping_status || '?'}</span> · 🔌 Status: <span class="badge-status ${badgeClass}">${h.status}</span> · Último contato: ${dt}</p>
                     </div>
                 </div>
                 <div class="actions-bar">
@@ -166,6 +170,24 @@
                         </table>
                     </div>
                 </div>
+
+                ${distro ? `
+                <!-- Distro (Linux) -->
+                <div class="panel animate-in" style="margin-bottom:20px;border-left:3px solid var(--success);">
+                    <div class="panel-header"><span class="panel-title">🐧 Sistema Operacional (Linux)</span></div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <tbody>
+                                <tr><td style="width:200px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Distribuição</td><td class="mono">${distro.pretty_name || distro.name || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Versão</td><td class="mono">${distro.version || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">ID</td><td class="mono">${distro.distro_id || distro.id || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Kernel</td><td class="mono">${distro.kernel || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Arquitetura</td><td class="mono">${distro.arch || '—'}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                ` : ''}
 
                 <!-- Discos -->
                 <div class="panel animate-in animate-in-delay-1" style="margin-bottom:20px;">

@@ -137,3 +137,4 @@ class CheckinPayload(BaseModel):
     network: Optional[list[NetworkPayload]] = None
     licenses: Optional[list[LicensePayload]] = None
     software: Optional[list[SoftwarePayload]] = None
+    distro: Optional[dict] = None

@@ -105,6 +105,16 @@ def _normalize_api_settings(remote, api_url, api_token):
         "interval_hours": int(schedule.get("interval_hours", 6)),
     }
 
+    # SSH
+    ssh = remote.get("ssh", {})
+    cfg["ssh"] = {
+        "username": ssh.get("username", "root"),
+        "port": int(ssh.get("port", 22)),
+        "private_key": ssh.get("private_key", ""),
+        "key_passphrase": ssh.get("key_passphrase", ""),
+        "timeout": int(ssh.get("timeout", 15)),
+    }
+
     # Logging (mantém default)
     cfg["logging"] = {
         "level": "INFO",

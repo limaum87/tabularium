@@ -65,7 +65,7 @@
                 <!-- WinRM -->
                 <div class="panel animate-in animate-in-delay-1" style="margin-bottom:20px;">
                     <div class="panel-header">
-                        <span class="panel-title">WinRM (Coleta Remota)</span>
+                        <span class="panel-title">WinRM (Coleta Remota Windows)</span>
                         <button class="btn-primary-accent" onclick="saveAndTestWinrm()" id="btn-winrm-test" style="padding:8px 18px;font-size:12px;">Salvar & Testar</button>
                     </div>
                     <div class="panel-body" style="padding:24px;">
@@ -100,6 +100,49 @@
                             </div>
                         </div>
                         <div id="winrm-result" style="margin-top:16px;display:none;"></div>
+                    </div>
+                </div>
+
+                <!-- SSH / Linux -->
+                <div class="panel animate-in animate-in-delay-1" style="margin-bottom:20px;">
+                    <div class="panel-header">
+                        <span class="panel-title">🐧 SSH (Coleta Remota Linux)</span>
+                        <button class="btn-primary-accent" onclick="saveAndTestSsh()" id="btn-ssh-test" style="padding:8px 18px;font-size:12px;">Salvar & Testar</button>
+                    </div>
+                    <div class="panel-body" style="padding:24px;">
+                        <div id="ssh-alert"></div>
+                        <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">
+                            Configure a chave privada SSH para coletar dados de hardware e distro dos servidores Linux. A chave deve estar no formato PEM (RSA ou Ed25519).
+                        </p>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                            <div>
+                                <label class="form-label-dark">Usuário SSH</label>
+                                <input type="text" class="form-control-dark" id="ssh-user" placeholder="root" value="root">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Porta SSH</label>
+                                <input type="number" class="form-control-dark" id="ssh-port" value="22">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Timeout (segundos)</label>
+                                <input type="number" class="form-control-dark" id="ssh-timeout" value="15">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Passphrase da Chave (opcional)</label>
+                                <input type="password" class="form-control-dark" id="ssh-key-passphrase" placeholder="Deixe vazio se não tiver">
+                            </div>
+                            <div style="grid-column:1/-1;">
+                                <label class="form-label-dark">Chave Privada SSH (formato PEM)</label>
+                                <textarea class="form-control-dark" id="ssh-private-key" rows="6" placeholder="-----BEGIN RSA PRIVATE KEY-----
+...
+-----END RSA PRIVATE KEY-----" style="font-family:var(--font-mono);font-size:11px;resize:vertical;"></textarea>
+                            </div>
+                            <div style="grid-column:1/-1;">
+                                <label class="form-label-dark">Host Linux para Teste</label>
+                                <input type="text" class="form-control-dark" id="ssh-test-host" placeholder="IP ou hostname de um servidor Linux">
+                            </div>
+                        </div>
+                        <div id="ssh-result" style="margin-top:16px;display:none;"></div>
                     </div>
                 </div>
 
@@ -203,6 +246,15 @@
                 if (data.dns) {
                     if (data.dns.servers) document.getElementById('dns-servers').value = data.dns.servers;
                     if (data.dns.search_domain) document.getElementById('dns-search').value = data.dns.search_domain;
+                }
+
+                // SSH
+                if (data.ssh) {
+                    if (data.ssh.username) document.getElementById('ssh-user').value = data.ssh.username;
+                    if (data.ssh.port) document.getElementById('ssh-port').value = data.ssh.port;
+                    if (data.ssh.timeout) document.getElementById('ssh-timeout').value = data.ssh.timeout;
+                    if (data.ssh.private_key) document.getElementById('ssh-private-key').value = data.ssh.private_key;
+                    if (data.ssh.key_passphrase) document.getElementById('ssh-key-passphrase').value = data.ssh.key_passphrase;
                 }
             }
         }
@@ -319,6 +371,60 @@
                     alertBox('winrm-result', true, `✓ ${data.message}`);
                 } else {
                     alertBox('winrm-result', false, `✗ ${data.message}`);
+                }
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Salvar & Testar';
+        }
+
+        async function saveAndTestSsh() {
+            const btn = document.getElementById('btn-ssh-test');
+            btn.disabled = true;
+            btn.textContent = 'Testando...';
+
+            const username = document.getElementById('ssh-user').value;
+            const port = parseInt(document.getElementById('ssh-port').value) || 22;
+            const timeout = parseInt(document.getElementById('ssh-timeout').value) || 15;
+            const privateKey = document.getElementById('ssh-private-key').value;
+            const keyPassphrase = document.getElementById('ssh-key-passphrase').value;
+            const testHost = document.getElementById('ssh-test-host').value;
+
+            // Salvar
+            await saveSettingsBatch([
+                { key: 'username', value: username, category: 'ssh' },
+                { key: 'port', value: String(port), category: 'ssh' },
+                { key: 'timeout', value: String(timeout), category: 'ssh' },
+                { key: 'private_key', value: privateKey, category: 'ssh' },
+                { key: 'key_passphrase', value: keyPassphrase, category: 'ssh' },
+            ]);
+
+            if (!testHost) {
+                alertBox('ssh-result', true, '✓ Configurações SSH salvas. Informe um host para testar.');
+                btn.disabled = false;
+                btn.textContent = 'Salvar & Testar';
+                return;
+            }
+
+            if (!privateKey) {
+                alertBox('ssh-result', false, '✗ Informe a chave privada para testar.');
+                btn.disabled = false;
+                btn.textContent = 'Salvar & Testar';
+                return;
+            }
+
+            // Testar
+            const res = await apiFetch('/api/settings/test-ssh', {
+                method: 'POST',
+                body: { hostname: testHost, username, private_key: privateKey, key_passphrase: keyPassphrase, port },
+            });
+
+            if (res) {
+                const data = await res.json();
+                if (data.success) {
+                    alertBox('ssh-result', true, `✓ ${data.message}`);
+                } else {
+                    alertBox('ssh-result', false, `✗ ${data.message}`);
                 }
             }
 

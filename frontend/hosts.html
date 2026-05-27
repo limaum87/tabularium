@@ -289,9 +289,9 @@
                             <thead>
                                 <tr>
                                     <th>Hostname</th>
-                                    <th>Domínio</th>
+                                    <th>SO</th>
                                     <th>Ping</th>
-                                    <th>WinRM</th>
+                                    <th>Status</th>
                                     <th>Última Coleta</th>
                                     <th></th>
                                     <th></th>
@@ -319,12 +319,14 @@
                 list.forEach(h => {
                     const statusBadge = h.status === 'online' ? 'badge-success' : h.status === 'offline' ? 'badge-danger' : 'badge-muted';
                     const pingBadge = h.ping_status === 'online' ? 'badge-success' : h.ping_status === 'offline' ? 'badge-danger' : 'badge-muted';
+                    const soIcon = h.so_type === 'linux' ? '🐧' : h.so_type === 'windows' ? '🪟' : '❓';
+                    const soLabel = h.so_type === 'linux' ? 'Linux' : h.so_type === 'windows' ? 'Windows' : '?';
                     const dt = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
                     tbody.innerHTML += `<tr id="row-${h.id}">
                         <td class="mono">${h.hostname}</td>
-                        <td>${h.domain || '—'}</td>
+                        <td><span style="font-size:11px;" title="${soLabel}">${soIcon}</span></td>
                         <td><span class="badge-status ${pingBadge}">📡 ${h.ping_status || '?'}</span></td>
-                        <td><span class="badge-status ${statusBadge}" title="WinRM">🔌 ${h.status}</span></td>
+                        <td><span class="badge-status ${statusBadge}" title="${soLabel}">🔌 ${h.status}</span></td>
                         <td>${dt}</td>
                         <td style="text-align:right"><a href="/host-detail.html?id=${h.id}" style="font-size:12px;font-family:var(--font-mono);color:var(--accent);">Ver detalhes →</a></td>
                         <td>

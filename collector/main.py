@@ -25,6 +25,7 @@ from collector.ldap_discovery import discover_hosts
 from collector.ping_check import check_hosts
 from collector.port_check import classify_hosts
 from collector.winrm_collector import WinRMCollector
+from collector.ssh_collector import SSHCollector
 from collector.api_client import APIClient
 
 
@@ -91,12 +92,34 @@ def run_collection():
         log.info("Teste de portas desabilitado. Tentando WinRM em todos os hosts online.")
 
     # -------------------------------------------------------
-    # 4. Reportar hosts Linux (SSH acessível, sem WinRM)
+    # 4. Coletar dados dos hosts Linux via SSH
     # -------------------------------------------------------
-    for host in linux_hosts:
-        hostname = host["hostname"] if isinstance(host, dict) else host
-        log.info(f"  🐧 {hostname} — Linux detectado (SSH acessível, sem WinRM)")
-        api.send_linux_checkin(hostname)
+    ssh_collector = SSHCollector(cfg)
+    if linux_hosts and ssh_collector.is_configured:
+        log.info(f"SSH: coletando {len(linux_hosts)} hosts Linux...")
+        for i, host in enumerate(linux_hosts, 1):
+            hostname = host["hostname"] if isinstance(host, dict) else host
+            log.info(f"  [{i}/{len(linux_hosts)}] {hostname}")
+
+            try:
+                ssh_data = ssh_collector.collect(hostname)
+                api.send_linux_checkin(hostname, hardware=ssh_data.get("hardware"),
+                                       distro=ssh_data.get("distro"),
+                                       disks=ssh_data.get("disks"),
+                                       network=ssh_data.get("network"))
+            except Exception as e:
+                log.error(f"    ✗ Erro SSH em {hostname}: {e}")
+                # Fallback: reporta como Linux sem dados detalhados
+                api.send_linux_checkin(hostname)
+    elif linux_hosts:
+        # SSH não configurado, apenas reporta como Linux detectado
+        log.info(f"SSH: {len(linux_hosts)} hosts Linux detectados, mas SSH não configurado. Reportando sem dados.")
+        for host in linux_hosts:
+            hostname = host["hostname"] if isinstance(host, dict) else host
+            log.info(f"  🐧 {hostname} — Linux detectado (SSH acessível, sem WinRM)")
+            api.send_linux_checkin(hostname)
+    else:
+        log.info("Nenhum host Linux detectado.")
 
     # -------------------------------------------------------
     # 5. Reportar hosts unknown (sem WinRM nem SSH)

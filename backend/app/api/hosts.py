@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import (
     get_db, Host, HostHardware, HostDisk, HostNetwork,
-    HostLicense, HostSoftware, HostRemoteAccess, ScanHistory,
+    HostLicense, HostSoftware, HostRemoteAccess, ScanHistory, HostDistro,
 )
 from app.core.security import get_current_user
 from app.schemas.schemas import CheckinPayload, HostResponse
@@ -119,6 +119,26 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
                 setattr(existing, k, v)
         else:
             db.add(HostHardware(host_id=host_id, **data))
+
+    # Distro (Linux)
+    if body.distro:
+        distro_data = body.distro
+        existing_distro = db.query(HostDistro).filter(HostDistro.host_id == host_id).first()
+        d_data = {
+            "name": distro_data.get("name"),
+            "version": distro_data.get("version"),
+            "distro_id": distro_data.get("id"),
+            "id_like": distro_data.get("id_like"),
+            "pretty_name": distro_data.get("pretty_name"),
+            "kernel": distro_data.get("kernel"),
+            "arch": distro_data.get("arch"),
+            "updated_at": now,
+        }
+        if existing_distro:
+            for k, v in d_data.items():
+                setattr(existing_distro, k, v)
+        else:
+            db.add(HostDistro(host_id=host_id, **d_data))
 
     # Discos (apaga e recria)
     if body.disks is not None:
@@ -985,6 +1005,7 @@ def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_
     licenses = db.query(HostLicense).filter(HostLicense.host_id == host_id).all()
     software = db.query(HostSoftware).filter(HostSoftware.host_id == host_id).all()
     remote_access = db.query(HostRemoteAccess).filter(HostRemoteAccess.host_id == host_id).first()
+    distro = db.query(HostDistro).filter(HostDistro.host_id == host_id).first()
     scans = (
         db.query(ScanHistory)
         .filter(ScanHistory.host_id == host_id)
@@ -1001,5 +1022,6 @@ def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_
         "licenses": licenses,
         "software": software,
         "remote_access": remote_access,
+        "distro": distro,
         "scans": scans,
     }

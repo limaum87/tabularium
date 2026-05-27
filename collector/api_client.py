@@ -67,10 +67,11 @@ class APIClient:
             data["so_type"] = "unknown"
         return self.send_checkin(data)
 
-    def send_linux_checkin(self, hostname, message=None):
+    def send_linux_checkin(self, hostname, hardware=None, distro=None, disks=None, network=None, message=None):
         """Registra um host como Linux detectado via porta SSH.
 
         Envia checkin com status 'linux' e so_type 'linux'.
+        Se dados de hardware/distro forem fornecidos, envia junto.
         """
         data = {
             "hostname": hostname,
@@ -78,4 +79,14 @@ class APIClient:
             "so_type": "linux",
             "message": message or "Detectado via porta SSH (22). WinRM indisponível.",
         }
+
+        if hardware:
+            data["hardware"] = hardware
+        if disks is not None:
+            data["disks"] = disks
+        if network is not None:
+            data["network"] = network
+        if distro:
+            data["distro"] = distro
+
         return self.send_checkin(data)

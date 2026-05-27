@@ -6,7 +6,7 @@ import asyncio
 import subprocess
 from datetime import datetime, timedelta
 
-from app.core.database import engine, Base, SessionLocal, User, Host
+from app.core.database import engine, Base, SessionLocal, User, Host, HostDistro
 from app.core.config import settings
 from app.core.security import hash_password
 from app.api import auth, users, hosts, reports, settings as settings_api, discovery, activity
@@ -455,6 +455,15 @@ def _migrate_db():
         print(f"[migration] Erro: {e}")
     finally:
         conn.close()
+
+    # Cria tabela host_distro se não existir
+    try:
+        tables = sqlalchemy.inspect(engine).get_table_names()
+        if 'host_distro' not in tables:
+            HostDistro.__table__.create(bind=engine, checkfirst=True)
+            print("[migration] Tabela host_distro criada")
+    except Exception as e:
+        print(f"[migration] Erro ao criar host_distro: {e}")
 
 
 def _seed_admin():

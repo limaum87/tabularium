@@ -199,3 +199,18 @@ class Setting(Base):
     value = Column(Text, nullable=True)
     category = Column(String(50), nullable=False, default="general")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class HostDistro(Base):
+    __tablename__ = "host_distro"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    host_id = Column(Integer, nullable=False, index=True)
+    name = Column(String(255), nullable=True)
+    version = Column(String(100), nullable=True)
+    distro_id = Column(String(100), nullable=True)
+    id_like = Column(String(255), nullable=True)
+    pretty_name = Column(String(255), nullable=True)
+    kernel = Column(String(100), nullable=True)
+    arch = Column(String(50), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
