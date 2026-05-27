@@ -280,6 +280,12 @@
                         <span class="panel-title">Lista de Hosts</span>
                         <div style="display:flex;gap:8px;align-items:center;">
                             <input type="text" class="form-control-dark" id="search-hosts" placeholder="Buscar hostname..." style="width:240px;padding:8px 14px;font-size:12px;">
+                            <select class="form-control-dark" id="filter-so" style="width:130px;padding:8px 10px;font-size:12px;">
+                                <option value="all">Todos OS</option>
+                                <option value="windows">🪟 Windows</option>
+                                <option value="linux">🐧 Linux</option>
+                                <option value="unknown">❓ Desconhecido</option>
+                            </select>
                             <label class="toggle-filter" id="toggle-online-wrap">
                                 <input type="checkbox" id="toggle-online">
                                 <span class="toggle-slider"></span>
@@ -354,16 +360,19 @@
             window.applyFilters = function() {
                 const q = document.getElementById('search-hosts').value.toLowerCase();
                 const onlyOnline = document.getElementById('toggle-online').checked;
+                const soFilter = document.getElementById('filter-so').value;
                 const filtered = allHosts.filter(h => {
                     const matchSearch = h.hostname.toLowerCase().includes(q) || (h.domain && h.domain.toLowerCase().includes(q));
                     const matchOnline = !onlyOnline || h.status === 'online';
-                    return matchSearch && matchOnline;
+                    const matchSo = soFilter === 'all' || h.so_type === soFilter;
+                    return matchSearch && matchOnline && matchSo;
                 });
                 renderHosts(filtered);
             };
 
             document.getElementById('search-hosts').addEventListener('input', window.applyFilters);
             document.getElementById('toggle-online').addEventListener('change', window.applyFilters);
+            document.getElementById('filter-so').addEventListener('change', window.applyFilters);
         }
 
         // ---- Discovery ----
