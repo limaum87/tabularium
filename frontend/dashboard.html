@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tabularium — Dashboard</title>
     <link rel="stylesheet" href="/css/theme.css">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 </head>
 <body>
     <div id="app"></div>
@@ -30,8 +33,13 @@
         async function loadDashboard() {
             mainContent.innerHTML = `
             <div class="page-header">
-                <h1>Dashboard</h1>
-                <p class="page-subtitle">Visão geral do inventário de ativos</p>
+                <div style="display:flex;align-items:center;gap:24px;margin-bottom:8px;">
+                    <img src="/assets/logo.png" alt="Tabularium" style="height:72px;width:auto;border-radius:12px;">
+                    <div>
+                        <h1 style="margin:0;">Dashboard</h1>
+                        <p class="page-subtitle">Visão geral do inventário de ativos</p>
+                    </div>
+                </div>
             </div>
             <div class="page-body">
                 <!-- Stat Cards -->

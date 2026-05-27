@@ -53,7 +53,7 @@ function loadLayout(activePage) {
     <div class="app-layout">
         <aside class="sidebar">
             <div class="sidebar-brand">
-                <div class="brand-icon">T</div>
+                <img src="/assets/logo.png" alt="Tabularium" style="height:36px;width:auto;border-radius:6px;">
                 <div class="brand-text">
                     <span class="brand-name">Tabularium</span>
                     <span class="brand-sub">Inventário de Ativos</span>
