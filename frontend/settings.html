@@ -60,6 +60,13 @@
                                 <label class="form-label-dark">OUs (separadas por ;)</label>
                                 <input type="text" class="form-control-dark" id="ad-ous" placeholder="OU=Computadores,DC=empresa,DC=local">
                             </div>
+                            <div>
+                                <label class="form-label-dark">Auto-importar novos hosts</label>
+                                <select class="form-control-dark" id="ad-auto-import">
+                                    <option value="true">Sim — importar automaticamente</option>
+                                    <option value="false">Não — só detectar</option>
+                                </select>
+                            </div>
                         </div>
                         <div id="ldap-result" style="margin-top:16px;display:none;"></div>
                     </div>
@@ -268,6 +275,7 @@
                     if (data.ad.base_dn) document.getElementById('ad-base-dn').value = data.ad.base_dn;
                     if (data.ad.search_filter) document.getElementById('ad-filter').value = data.ad.search_filter;
                     if (data.ad.ou_list) document.getElementById('ad-ous').value = Array.isArray(data.ad.ou_list) ? data.ad.ou_list.join('; ') : data.ad.ou_list;
+                    if (data.ad.auto_import) document.getElementById('ad-auto-import').value = data.ad.auto_import;
                 }
 
                 // WinRM
@@ -376,6 +384,7 @@
                 { key: 'base_dn', value: base_dn, category: 'ad' },
                 { key: 'search_filter', value: search_filter, category: 'ad' },
                 { key: 'ou_list', value: JSON.stringify(ou_list), category: 'ad' },
+                { key: 'auto_import', value: document.getElementById('ad-auto-import').value, category: 'ad' },
             ]);
 
             // Testar

@@ -19,15 +19,19 @@ COLLECT_INTERVAL = 21600  # 6 horas (padrão, pode ser alterado no banco)
 COLLECT_STARTUP_DELAY = 60  # espera 60s antes da primeira coleta
 NET_DISCOVERY_INTERVAL = 86400  # 24 horas (1x por dia)
 NET_DISCOVERY_STARTUP_DELAY = 120  # espera 2 min antes do primeiro scan
+AD_DISCOVERY_INTERVAL = 259200  # 3 dias (1x a cada 3 dias)
+AD_DISCOVERY_STARTUP_DELAY = 180  # espera 3 min antes do primeiro scan
 
 _ping_task = None
 _collect_task = None
 _net_discovery_task = None
+_ad_discovery_task = None
 _last_ping_log = None
 _last_collect_log = None
 _next_ping_at = None       # datetime da próxima execução de ping sweep
 _next_collect_at = None    # datetime da próxima execução de coleta automática
 _next_net_discovery_at = None  # datetime do próximo network discovery
+_next_ad_discovery_at = None   # datetime do próximo AD discovery
 
 
 async def _ping_loop():
@@ -529,6 +533,189 @@ def _run_auto_network_discovery():
         db.close()
 
 
+def _run_auto_ad_discovery():
+    """Executa AD discovery automático e importa novos hosts."""
+    import json as json_mod
+    from app.core.database import Host, Setting
+    from app.api.activity import log_activity
+
+    db = SessionLocal()
+    try:
+        # Lê configs do AD
+        settings = {}
+        for r in db.query(Setting).all():
+            settings[f"{r.category}.{r.key}"] = r.value
+
+        server = settings.get("ad.server", "")
+        bind_dn = settings.get("ad.bind_dn", "")
+        password = settings.get("ad.password", "")
+        base_dn = settings.get("ad.base_dn", "")
+        search_filter = settings.get("ad.search_filter", "(objectClass=computer)")
+        ou_list_raw = settings.get("ad.ou_list", "[]")
+        auto_import = settings.get("ad.auto_import", "true").strip().lower() in ("true", "1", "yes")
+
+        try:
+            ou_list = json_mod.loads(ou_list_raw) if ou_list_raw else []
+        except Exception:
+            ou_list = []
+
+        if not all([server, bind_dn, password, base_dn]):
+            return  # AD não configurado, pula silenciosamente
+
+        # Importa ldap3
+        try:
+            from ldap3 import Server, Connection, ALL, SUBTREE
+        except ImportError:
+            print("[ad-discovery-auto] Biblioteca ldap3 não instalada")
+            return
+
+        print(f"[ad-discovery-auto] Consultando AD ({server})...")
+
+        # Conecta
+        try:
+            srv = Server(server, get_info=ALL, connect_timeout=10)
+            conn = Connection(srv, user=bind_dn, password=password, auto_bind=True, read_only=True)
+        except Exception as e:
+            print(f"[ad-discovery-auto] Falha ao conectar ao AD: {e}")
+            return
+
+        # Busca computadores
+        search_bases = ou_list if ou_list else [base_dn]
+        ad_hosts = []
+
+        for base in search_bases:
+            try:
+                conn.search(
+                    search_base=base,
+                    search_filter=search_filter,
+                    search_scope=SUBTREE,
+                    attributes=["cn", "dNSHostName", "name", "operatingSystem"],
+                )
+                for entry in conn.entries:
+                    hostname = ""
+                    if hasattr(entry, "dNSHostName") and entry.dNSHostName.value:
+                        hostname = entry.dNSHostName.value.split(".")[0]
+                    elif hasattr(entry, "cn") and entry.cn.value:
+                        hostname = entry.cn.value
+                    elif hasattr(entry, "name") and entry.name.value:
+                        hostname = entry.name.value
+                    if hostname:
+                        ad_hosts.append({
+                            "hostname": hostname.upper(),
+                            "os": getattr(entry, "operatingSystem", None) and entry.operatingSystem.value or "",
+                            "dn": entry.entry_dn,
+                        })
+            except Exception:
+                pass
+
+        conn.unbind()
+
+        # Deduplica
+        seen = set()
+        unique = []
+        for h in ad_hosts:
+            if h["hostname"] not in seen:
+                seen.add(h["hostname"])
+                unique.append(h)
+
+        # Verifica quais já existem
+        existing = {h.hostname.upper() for h in db.query(Host).all()}
+        new_hosts = [h for h in unique if h["hostname"] not in existing]
+
+        print(f"[ad-discovery-auto] {len(unique)} computadores no AD, {len(new_hosts)} novos")
+
+        # Auto-importa se habilitado
+        if auto_import and new_hosts:
+            imported = 0
+            for h in new_hosts:
+                hn = h["hostname"].strip().upper()
+                if not hn:
+                    continue
+                if db.query(Host).filter(Host.hostname == hn).first():
+                    continue
+                host = Host(hostname=hn, status="unknown", so_type="unknown", last_seen=None)
+                db.add(host)
+                imported += 1
+            db.commit()
+
+            log_activity(db,
+                activity_type="discovery_run",
+                status="success",
+                message=f"AD Discovery auto: {len(unique)} no AD, {imported} novos importados",
+                details={"total": len(unique), "imported": imported, "new": len(new_hosts), "auto": True, "source": "ad"},
+                source="system",
+            )
+            db.commit()
+            print(f"[ad-discovery-auto] {imported} novos hosts importados")
+        elif new_hosts:
+            log_activity(db,
+                activity_type="discovery_run",
+                status="success",
+                message=f"AD Discovery auto: {len(unique)} no AD, {len(new_hosts)} novos (auto-import desabilitado)",
+                details={"total": len(unique), "new": len(new_hosts), "auto": True, "source": "ad"},
+                source="system",
+            )
+            db.commit()
+        else:
+            log_activity(db,
+                activity_type="discovery_run",
+                status="success",
+                message=f"AD Discovery auto: {len(unique)} no AD, nenhum novo",
+                details={"total": len(unique), "new": 0, "auto": True, "source": "ad"},
+                source="system",
+            )
+            db.commit()
+
+    except Exception as e:
+        print(f"[ad-discovery-auto] Erro: {e}")
+        try:
+            from app.api.activity import log_activity
+            log_activity(db, activity_type="discovery_run", status="error",
+                         message=f"AD Discovery auto falhou: {str(e)[:200]}", source="system")
+            db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+async def _ad_discovery_loop():
+    """Background task: AD discovery automático 1x a cada 3 dias."""
+    global _next_ad_discovery_at
+
+    _next_ad_discovery_at = datetime.utcnow() + timedelta(seconds=AD_DISCOVERY_STARTUP_DELAY)
+    await asyncio.sleep(AD_DISCOVERY_STARTUP_DELAY)
+
+    while True:
+        try:
+            # Verifica se AD está configurado
+            db = SessionLocal()
+            try:
+                from app.core.database import Setting
+                server = db.query(Setting).filter(Setting.key == "server", Setting.category == "ad").first()
+                if not server or not server.value or not server.value.strip():
+                    print("[ad-discovery-auto] AD não configurado. Pulando.")
+                    _next_ad_discovery_at = datetime.utcnow() + timedelta(seconds=AD_DISCOVERY_INTERVAL)
+                    await asyncio.sleep(AD_DISCOVERY_INTERVAL)
+                    continue
+            finally:
+                db.close()
+
+            await asyncio.wait_for(
+                asyncio.to_thread(_run_auto_ad_discovery),
+                timeout=600  # 10 min max
+            )
+        except asyncio.TimeoutError:
+            print("[ad-discovery-auto] Timeout (10min) — scan abortado")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[ad-discovery-auto] Erro no loop: {e}")
+
+        _next_ad_discovery_at = datetime.utcnow() + timedelta(seconds=AD_DISCOVERY_INTERVAL)
+        await asyncio.sleep(AD_DISCOVERY_INTERVAL)
+
+
 async def _net_discovery_loop():
     """Background task: network discovery automático 1x por dia."""
     global _next_net_discovery_at
@@ -613,7 +800,7 @@ async def lifespan(app: FastAPI):
     _apply_dns_from_db()
 
     # Inicia background ping task
-    global _ping_task, _collect_task, _net_discovery_task
+    global _ping_task, _collect_task, _net_discovery_task, _ad_discovery_task
     _ping_task = asyncio.create_task(_ping_loop())
     print(f"[ping-sweep] Iniciado — intervalo: {PING_INTERVAL}s")
 
@@ -625,6 +812,10 @@ async def lifespan(app: FastAPI):
     _net_discovery_task = asyncio.create_task(_net_discovery_loop())
     print(f"[net-discovery-auto] Iniciado — intervalo: {NET_DISCOVERY_INTERVAL}s (1x por dia)")
 
+    # Inicia background AD discovery task
+    _ad_discovery_task = asyncio.create_task(_ad_discovery_loop())
+    print(f"[ad-discovery-auto] Iniciado — intervalo: {AD_DISCOVERY_INTERVAL}s (1x a cada 3 dias)")
+
     yield
 
     # Cancela tasks ao desligar
@@ -634,6 +825,8 @@ async def lifespan(app: FastAPI):
         _collect_task.cancel()
     if _net_discovery_task:
         _net_discovery_task.cancel()
+    if _ad_discovery_task:
+        _ad_discovery_task.cancel()
 
 
 def _migrate_db():
