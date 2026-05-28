@@ -152,6 +152,49 @@
                 <!-- DNS -->
                 <div class="panel animate-in" style="margin-bottom:20px;">
                     <div class="panel-header">
+                        <span class="panel-title">📡 Rede — Network Discovery (Linux)</span>
+                        <button class="btn-primary-accent" onclick="saveNetwork()" style="padding:8px 18px;font-size:12px;">Salvar</button>
+                    </div>
+                    <div class="panel-body" style="padding:24px;">
+                        <div id="network-alert"></div>
+                        <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">
+                            Configure as sub-redes para o Network Discovery. O scanner varre cada IP tentando conectar na porta SSH (22). Se a porta responde e lê o banner SSH, a máquina é identificada como Linux. Use formato CIDR, ex: <code style="font-family:var(--font-mono);font-size:11px;background:var(--accent-dim);padding:1px 4px;border-radius:3px;">192.168.1.0/24</code>
+                        </p>
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+                            <div style="grid-column:1/-1;">
+                                <label class="form-label-dark">Sub-redes (separadas por ;)</label>
+                                <input type="text" class="form-control-dark" id="net-subnets" placeholder="192.168.1.0/24; 10.0.0.0/24">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Porta SSH</label>
+                                <input type="number" class="form-control-dark" id="net-ssh-port" value="22">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Timeout (segundos)</label>
+                                <input type="number" class="form-control-dark" id="net-timeout" value="2" min="1" max="10">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Workers (paralelismo)</label>
+                                <input type="number" class="form-control-dark" id="net-workers" value="100" min="10" max="500">
+                            </div>
+                            <div>
+                                <label class="form-label-dark">Auto-importar novos hosts</label>
+                                <select class="form-control-dark" id="net-auto-import">
+                                    <option value="true">Sim — importar automaticamente</option>
+                                    <option value="false">Não — só detectar</option>
+                                </select>
+                            </div>
+                            <div style="grid-column:1/-1;">
+                                <label class="form-label-dark">IPs para excluir (separados por ;)</label>
+                                <input type="text" class="form-control-dark" id="net-exclude" placeholder="192.168.1.1; 192.168.1.254">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DNS -->
+                <div class="panel animate-in" style="margin-bottom:20px;">
+                    <div class="panel-header">
                         <span class="panel-title">DNS (Resolução de Nomes)</span>
                         <div style="display:flex;gap:8px;">
                             <button class="btn-primary-accent" onclick="testDns()" id="btn-dns-test" style="padding:8px 18px;font-size:12px;">Testar DNS</button>
@@ -258,6 +301,30 @@
                     if (data.ssh.timeout) document.getElementById('ssh-timeout').value = data.ssh.timeout;
                     if (data.ssh.private_key) document.getElementById('ssh-private-key').value = data.ssh.private_key;
                     if (data.ssh.key_passphrase) document.getElementById('ssh-key-passphrase').value = data.ssh.key_passphrase;
+                }
+
+                // Network
+                if (data.network) {
+                    if (data.network.subnets) {
+                        try {
+                            const subs = JSON.parse(data.network.subnets);
+                            document.getElementById('net-subnets').value = Array.isArray(subs) ? subs.join('; ') : subs;
+                        } catch(e) {
+                            document.getElementById('net-subnets').value = data.network.subnets;
+                        }
+                    }
+                    if (data.network.ssh_port) document.getElementById('net-ssh-port').value = data.network.ssh_port;
+                    if (data.network.timeout) document.getElementById('net-timeout').value = data.network.timeout;
+                    if (data.network.max_workers) document.getElementById('net-workers').value = data.network.max_workers;
+                    if (data.network.exclude_ips) {
+                        try {
+                            const exc = JSON.parse(data.network.exclude_ips);
+                            document.getElementById('net-exclude').value = Array.isArray(exc) ? exc.join('; ') : exc;
+                        } catch(e) {
+                            document.getElementById('net-exclude').value = data.network.exclude_ips;
+                        }
+                    }
+                    if (data.network.auto_import) document.getElementById('net-auto-import').value = data.network.auto_import;
                 }
             }
         }
@@ -526,6 +593,30 @@
                 : '✓ Coleta automática desabilitada';
             alertBox('schedule-alert', true, statusMsg);
             setTimeout(() => { document.getElementById('schedule-alert').style.display = 'none'; }, 5000);
+        }
+
+        async function saveNetwork() {
+            const subnets_raw = document.getElementById('net-subnets').value.trim();
+            const sshPort = parseInt(document.getElementById('net-ssh-port').value) || 22;
+            const timeout = parseInt(document.getElementById('net-timeout').value) || 2;
+            const workers = parseInt(document.getElementById('net-workers').value) || 100;
+            const exclude_raw = document.getElementById('net-exclude').value.trim();
+
+            const subnets = subnets_raw ? subnets_raw.split(';').map(s => s.trim()).filter(Boolean) : [];
+            const exclude_ips = exclude_raw ? exclude_raw.split(';').map(s => s.trim()).filter(Boolean) : [];
+            const autoImport = document.getElementById('net-auto-import').value;
+
+            await saveSettingsBatch([
+                { key: 'subnets', value: JSON.stringify(subnets), category: 'network' },
+                { key: 'ssh_port', value: String(sshPort), category: 'network' },
+                { key: 'timeout', value: String(timeout), category: 'network' },
+                { key: 'max_workers', value: String(workers), category: 'network' },
+                { key: 'exclude_ips', value: JSON.stringify(exclude_ips), category: 'network' },
+                { key: 'auto_import', value: autoImport, category: 'network' },
+            ]);
+
+            alertBox('network-alert', true, `✓ Configurações de rede salvas — ${subnets.length} sub-rede(s) configurada(s). Network Discovery automático: 1x por dia.`);
+            setTimeout(() => { document.getElementById('network-alert').style.display = 'none'; }, 5000);
         }
 
         // Load schedule status

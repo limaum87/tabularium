@@ -219,6 +219,41 @@
 <body>
     <div id="app"></div>
 
+    <!-- Modal Network Discovery -->
+    <div class="modal-overlay" id="net-discovery-modal">
+        <div class="modal-box" style="max-width:900px;">
+            <div class="modal-header">
+                <h3>📡 Network Discovery — Scan de Rede Linux</h3>
+                <button class="modal-close" onclick="closeNetDiscovery()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div id="net-loading" style="text-align:center;padding:40px;color:var(--text-muted);font-family:var(--font-mono);">
+                    Escaneando rede — verificando porta SSH (22)...
+                    <div style="margin-top:12px;font-size:11px;" id="net-progress"></div>
+                </div>
+                <div id="net-content" style="display:none;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                        <div class="discovery-stats" id="net-stats"></div>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn-logout" onclick="netToggleAll(true)" style="font-size:11px;padding:4px 10px;">Todos</button>
+                            <button class="btn-logout" onclick="netToggleAll(false)" style="font-size:11px;padding:4px 10px;">Nenhum</button>
+                            <button class="btn-logout" onclick="netSelectOnlyNew()" style="font-size:11px;padding:4px 10px;">Só novos</button>
+                        </div>
+                    </div>
+                    <div id="net-list"></div>
+                </div>
+                <div id="net-error" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <div style="font-size:12px;color:var(--text-muted);font-family:var(--font-mono);" id="net-selected-count">0 selecionados</div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn-logout" onclick="closeNetDiscovery()">Cancelar</button>
+                    <button class="btn-primary-accent" onclick="netImportSelected()" id="btn-net-import" style="padding:8px 18px;font-size:12px;">Importar Selecionados</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Discovery -->
     <div class="modal-overlay" id="discovery-modal">
         <div class="modal-box">
@@ -270,7 +305,8 @@
                         <h1>Hosts</h1>
                         <p class="page-subtitle">Máquinas inventariadas no domínio</p>
                     </div>
-                    <button class="btn-primary-accent" onclick="openDiscovery()" style="padding:10px 20px;font-size:13px;">⟳ Descobrir Máquinas</button>
+                    <button class="btn-primary-accent" onclick="openDiscovery()" style="padding:10px 20px;font-size:13px;">⟳ Descobrir Máquinas (AD)</button>
+                    <button class="btn-primary-accent" onclick="openNetDiscovery()" style="padding:10px 20px;font-size:13px;margin-left:8px;background:linear-gradient(135deg,var(--accent),#6366f1);">📡 Network Discovery</button>
                     <button class="btn-primary-accent" onclick="pingSweep()" id="btn-sweep" style="padding:10px 20px;font-size:13px;margin-left:8px;">📡 Ping Sweep</button>
                 </div>
             </div>
@@ -622,6 +658,170 @@
         }
 
         loadHosts();
+
+        // ---- Network Discovery (Linux) ----
+
+        let netDiscoveredHosts = [];
+
+        function openNetDiscovery() {
+            document.getElementById('net-discovery-modal').classList.add('open');
+            document.getElementById('net-loading').style.display = 'block';
+            document.getElementById('net-content').style.display = 'none';
+            document.getElementById('net-error').style.display = 'none';
+            runNetDiscovery();
+        }
+
+        function closeNetDiscovery() {
+            document.getElementById('net-discovery-modal').classList.remove('open');
+        }
+
+        async function runNetDiscovery() {
+            try {
+                const res = await apiFetch('/api/discovery/network-run', { method: 'POST' });
+                if (!res) {
+                    showNetError('Erro de conexão com a API');
+                    return;
+                }
+                const data = await res.json();
+
+                if (!res.ok) {
+                    showNetError(data.detail || 'Erro no network discovery');
+                    return;
+                }
+
+                netDiscoveredHosts = data.hosts || [];
+
+                document.getElementById('net-loading').style.display = 'none';
+                document.getElementById('net-content').style.display = 'block';
+
+                // Stats
+                document.getElementById('net-stats').innerHTML = `
+                    <div>Escaneados: <span class="val">${data.scanned || '?'}</span></div>
+                    <div>SSH encontrado: <span class="val">${data.total}</span></div>
+                    <div>Novos: <span class="val" style="color:var(--accent)">${data.new_count}</span></div>
+                    <div>Já no banco: <span class="val">${data.existing_count}</span></div>
+                `;
+
+                // List
+                const list = document.getElementById('net-list');
+                list.innerHTML = '';
+
+                if (netDiscoveredHosts.length === 0) {
+                    list.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted);font-family:var(--font-mono);">Nenhuma máquina com SSH encontrado nas sub-redes configuradas</div>';
+                    return;
+                }
+
+                // Ordena: novos primeiro
+                netDiscoveredHosts.sort((a, b) => {
+                    if (a.status === 'new' && b.status !== 'new') return -1;
+                    if (a.status !== 'new' && b.status === 'new') return 1;
+                    return a.ip.localeCompare(b.ip, undefined, { numeric: true });
+                });
+
+                netDiscoveredHosts.forEach((h, i) => {
+                    const badge = h.status === 'new'
+                        ? '<span class="badge-new">NOVO</span>'
+                        : '<span class="badge-existing">EXISTENTE</span>';
+                    const hostname = h.hostname || '<span style="color:var(--text-muted);font-style:italic;">sem hostname</span>';
+                    const banner = h.ssh_banner ? h.ssh_banner.substring(0, 60) : '—';
+                    list.innerHTML += `
+                    <div class="checkbox-row">
+                        <input type="checkbox" id="net-${i}" data-index="${i}" ${h.status === 'new' ? 'checked' : ''}>
+                        <span class="host-name" style="min-width:120px;">${hostname}</span>
+                        <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted);min-width:110px;">${h.ip}</span>
+                        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${banner}">${banner}</span>
+                        ${badge}
+                    </div>`;
+                });
+
+                netUpdateSelectedCount();
+
+                // Listeners
+                list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                    cb.addEventListener('change', netUpdateSelectedCount);
+                });
+
+            } catch (err) {
+                showNetError(err.message);
+            }
+        }
+
+        function showNetError(msg) {
+            document.getElementById('net-loading').style.display = 'none';
+            document.getElementById('net-error').style.display = 'block';
+            document.getElementById('net-error').innerHTML = `
+                <div style="padding:20px;text-align:center;">
+                    <div style="font-size:32px;margin-bottom:12px;">✗</div>
+                    <div style="color:var(--danger);font-family:var(--font-mono);font-size:13px;">${msg}</div>
+                    <div style="color:var(--text-muted);font-size:12px;margin-top:8px;">Verifique as sub-redes em Configurações → Rede</div>
+                </div>`;
+        }
+
+        function netUpdateSelectedCount() {
+            const checked = document.querySelectorAll('#net-list input[type="checkbox"]:checked');
+            document.getElementById('net-selected-count').textContent = `${checked.length} selecionados`;
+        }
+
+        function netToggleAll(checked) {
+            document.querySelectorAll('#net-list input[type="checkbox"]').forEach(cb => cb.checked = checked);
+            netUpdateSelectedCount();
+        }
+
+        function netSelectOnlyNew() {
+            document.querySelectorAll('#net-list input[type="checkbox"]').forEach(cb => {
+                const idx = parseInt(cb.dataset.index);
+                cb.checked = netDiscoveredHosts[idx].status === 'new';
+            });
+            netUpdateSelectedCount();
+        }
+
+        async function netImportSelected() {
+            const btn = document.getElementById('btn-net-import');
+            const selectedHosts = [];
+
+            document.querySelectorAll('#net-list input[type="checkbox"]:checked').forEach(cb => {
+                const idx = parseInt(cb.dataset.index);
+                const h = netDiscoveredHosts[idx];
+                selectedHosts.push({
+                    ip: h.ip,
+                    hostname: h.hostname || h.ip,
+                    ssh_banner: h.ssh_banner,
+                });
+            });
+
+            if (selectedHosts.length === 0) {
+                alert('Selecione ao menos uma máquina');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Importando...';
+
+            try {
+                const res = await apiFetch('/api/discovery/network-import', {
+                    method: 'POST',
+                    body: { hosts: selectedHosts },
+                });
+
+                if (res && res.ok) {
+                    const data = await res.json();
+                    closeNetDiscovery();
+                    loadHosts();
+                    const header = document.querySelector('.page-subtitle');
+                    if (header) {
+                        header.textContent = data.detail;
+                        header.style.color = 'var(--success)';
+                        setTimeout(() => {
+                            header.textContent = 'Máquinas inventariadas no domínio';
+                            header.style.color = '';
+                        }, 3000);
+                    }
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Importar Selecionados';
+            }
+        }
     </script>
 </body>
 </html>

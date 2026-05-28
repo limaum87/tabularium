@@ -17,13 +17,17 @@ PING_INTERVAL = 300  # 5 minutos
 PING_LOG_INTERVAL = 3600  # log a cada 1 hora
 COLLECT_INTERVAL = 21600  # 6 horas (padrão, pode ser alterado no banco)
 COLLECT_STARTUP_DELAY = 60  # espera 60s antes da primeira coleta
+NET_DISCOVERY_INTERVAL = 86400  # 24 horas (1x por dia)
+NET_DISCOVERY_STARTUP_DELAY = 120  # espera 2 min antes do primeiro scan
 
 _ping_task = None
 _collect_task = None
+_net_discovery_task = None
 _last_ping_log = None
 _last_collect_log = None
 _next_ping_at = None       # datetime da próxima execução de ping sweep
 _next_collect_at = None    # datetime da próxima execução de coleta automática
+_next_net_discovery_at = None  # datetime do próximo network discovery
 
 
 async def _ping_loop():
@@ -359,6 +363,209 @@ def _run_auto_collect():
         db.close()
 
 
+def _run_auto_network_discovery():
+    """Executa network discovery automático e importa novos hosts."""
+    import json as json_mod
+    import socket
+    import ipaddress
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from app.core.database import Host, HostNetwork, Setting
+    from app.api.activity import log_activity
+
+    db = SessionLocal()
+    try:
+        # Lê configs
+        settings = {}
+        for r in db.query(Setting).all():
+            settings[f"{r.category}.{r.key}"] = r.value
+
+        subnets_raw = settings.get("network.subnets", "[]")
+        ssh_port = int(settings.get("network.ssh_port", "22"))
+        timeout = float(settings.get("network.timeout", "2"))
+        max_workers = int(settings.get("network.max_workers", "100"))
+        exclude_raw = settings.get("network.exclude_ips", "[]")
+        auto_import = settings.get("network.auto_import", "true").strip().lower() in ("true", "1", "yes")
+
+        try:
+            subnets = json_mod.loads(subnets_raw) if subnets_raw else []
+        except Exception:
+            subnets = []
+        try:
+            exclude_ips = set(json_mod.loads(exclude_raw)) if exclude_raw else set()
+        except Exception:
+            exclude_ips = set()
+
+        if not subnets:
+            return  # Sem sub-redes configuradas, pula silenciosamente
+
+        # Gera IPs
+        all_ips = []
+        for subnet in subnets:
+            try:
+                network = ipaddress.ip_network(subnet.strip(), strict=False)
+                for ip in network.hosts():
+                    ip_str = str(ip)
+                    if ip_str not in exclude_ips:
+                        all_ips.append(ip_str)
+            except ValueError:
+                continue
+
+        if not all_ips:
+            return
+
+        print(f"[net-discovery-auto] Escaneando {len(all_ips)} IPs em {len(subnets)} sub-rede(s)...")
+
+        # Funções auxiliares inline
+        def grab_banner(ip, port=ssh_port, tout=timeout):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(tout)
+                sock.connect((ip, port))
+                banner = sock.recv(256).decode("utf-8", errors="ignore").strip()
+                sock.close()
+                return banner if banner else None
+            except (socket.timeout, socket.error, ConnectionRefusedError, OSError):
+                return None
+
+        def resolve_hostname(ip):
+            try:
+                hostname, _, _ = socket.gethostbyaddr(ip)
+                return hostname.split(".")[0].upper()
+            except (socket.herror, socket.gaierror, OSError):
+                return None
+
+        # Scan paralelo
+        found = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {}
+            for ip in all_ips:
+                futures[executor.submit(grab_banner, ip)] = ip
+            for future in as_completed(futures):
+                try:
+                    banner = future.result()
+                    if banner:
+                        ip = futures[future]
+                        hostname = resolve_hostname(ip)
+                        found.append({"ip": ip, "hostname": hostname, "ssh_banner": banner})
+                except Exception:
+                    pass
+
+        # Verifica quais já existem
+        existing_hostnames = {h.hostname.upper() for h in db.query(Host).all()}
+        existing_ips = set()
+        for r in db.query(HostNetwork.ip).filter(HostNetwork.ip.isnot(None)).all():
+            if r.ip:
+                existing_ips.add(r.ip)
+
+        new_hosts = []
+        for h in found:
+            hostname = h.get("hostname") or ""
+            ip = h["ip"]
+            if hostname.upper() not in existing_hostnames and ip not in existing_ips:
+                new_hosts.append(h)
+
+        print(f"[net-discovery-auto] {len(found)} hosts com SSH, {len(new_hosts)} novos")
+
+        # Auto-importa se habilitado
+        if auto_import and new_hosts:
+            now = datetime.utcnow()
+            imported = 0
+            for h in new_hosts:
+                hostname = (h.get("hostname") or h["ip"]).strip().upper()
+                if not hostname:
+                    continue
+                existing = db.query(Host).filter(Host.hostname == hostname).first()
+                if existing:
+                    continue
+                host = Host(hostname=hostname, status="unknown", so_type="linux", last_seen=None)
+                db.add(host)
+                db.flush()
+                if h["ip"]:
+                    net = HostNetwork(host_id=host.id, ip=h["ip"], updated_at=now)
+                    db.add(net)
+                imported += 1
+            db.commit()
+
+            log_activity(db,
+                activity_type="discovery_run",
+                status="success",
+                message=f"Network Discovery auto: {len(found)} com SSH, {imported} novos importados",
+                details={"total_ssh": len(found), "imported": imported, "scanned": len(all_ips), "auto": True},
+                source="system",
+            )
+            db.commit()
+            print(f"[net-discovery-auto] {imported} novos hosts Linux importados")
+        elif new_hosts:
+            # Só loga se encontrou novos mas não importou
+            log_activity(db,
+                activity_type="discovery_run",
+                status="success",
+                message=f"Network Discovery auto: {len(found)} com SSH, {len(new_hosts)} novos (auto-import desabilitado)",
+                details={"total_ssh": len(found), "new": len(new_hosts), "scanned": len(all_ips), "auto": True},
+                source="system",
+            )
+            db.commit()
+        else:
+            # Nenhum novo, log discreto
+            log_activity(db,
+                activity_type="discovery_run",
+                status="success",
+                message=f"Network Discovery auto: {len(found)} com SSH, nenhum novo",
+                details={"total_ssh": len(found), "new": 0, "scanned": len(all_ips), "auto": True},
+                source="system",
+            )
+            db.commit()
+
+    except Exception as e:
+        print(f"[net-discovery-auto] Erro: {e}")
+        try:
+            from app.api.activity import log_activity
+            log_activity(db, activity_type="discovery_run", status="error",
+                         message=f"Network Discovery auto falhou: {str(e)[:200]}", source="system")
+            db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+async def _net_discovery_loop():
+    """Background task: network discovery automático 1x por dia."""
+    global _next_net_discovery_at
+
+    _next_net_discovery_at = datetime.utcnow() + timedelta(seconds=NET_DISCOVERY_STARTUP_DELAY)
+    await asyncio.sleep(NET_DISCOVERY_STARTUP_DELAY)
+
+    while True:
+        try:
+            # Verifica se tem sub-redes configuradas
+            db = SessionLocal()
+            try:
+                from app.core.database import Setting
+                subnets_setting = db.query(Setting).filter(Setting.key == "subnets", Setting.category == "network").first()
+                if not subnets_setting or not subnets_setting.value or subnets_setting.value.strip() in ("[]", ""):
+                    print("[net-discovery-auto] Sem sub-redes configuradas. Pulando.")
+                    _next_net_discovery_at = datetime.utcnow() + timedelta(seconds=NET_DISCOVERY_INTERVAL)
+                    await asyncio.sleep(NET_DISCOVERY_INTERVAL)
+                    continue
+            finally:
+                db.close()
+
+            await asyncio.wait_for(
+                asyncio.to_thread(_run_auto_network_discovery),
+                timeout=1800  # 30 min max
+            )
+        except asyncio.TimeoutError:
+            print("[net-discovery-auto] Timeout (30min) — scan abortado")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[net-discovery-auto] Erro no loop: {e}")
+
+        _next_net_discovery_at = datetime.utcnow() + timedelta(seconds=NET_DISCOVERY_INTERVAL)
+        await asyncio.sleep(NET_DISCOVERY_INTERVAL)
+
+
 async def _collect_loop():
     """Background task: coleta automática de dados via WinRM."""
     global _last_collect_log, _next_collect_at
@@ -406,13 +613,17 @@ async def lifespan(app: FastAPI):
     _apply_dns_from_db()
 
     # Inicia background ping task
-    global _ping_task, _collect_task
+    global _ping_task, _collect_task, _net_discovery_task
     _ping_task = asyncio.create_task(_ping_loop())
     print(f"[ping-sweep] Iniciado — intervalo: {PING_INTERVAL}s")
 
     # Inicia background collect task
     _collect_task = asyncio.create_task(_collect_loop())
     print(f"[collect-auto] Iniciado — intervalo padrão: {COLLECT_INTERVAL}s")
+
+    # Inicia background network discovery task
+    _net_discovery_task = asyncio.create_task(_net_discovery_loop())
+    print(f"[net-discovery-auto] Iniciado — intervalo: {NET_DISCOVERY_INTERVAL}s (1x por dia)")
 
     yield
 
@@ -421,6 +632,8 @@ async def lifespan(app: FastAPI):
         _ping_task.cancel()
     if _collect_task:
         _collect_task.cancel()
+    if _net_discovery_task:
+        _net_discovery_task.cancel()
 
 
 def _migrate_db():
