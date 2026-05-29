@@ -968,6 +968,7 @@ app.include_router(users.router)
 app.include_router(hosts.router)
 app.include_router(reports.router)
 app.include_router(settings_api.router)
+app.include_router(discovery.router)
 app.include_router(activity.router)
 
 
