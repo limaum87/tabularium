@@ -83,6 +83,12 @@ def ssh_run(client, command, timeout=30):
 
 # ---- Scripts de coleta (bash) ----
 
+def bash_hostname():
+    return r"""
+echo "{\"hostname\":\"$(hostname -s 2>/dev/null || cat /etc/hostname 2>/dev/null | head -1)\",\"fqdn\":\"$(hostname -f 2>/dev/null || hostname 2>/dev/null)\"}"
+"""
+
+
 def bash_hardware():
     return r"""
 echo '{'

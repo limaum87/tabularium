@@ -388,7 +388,7 @@ def _collect_stream_linux(host_id: int, host, db: Session):
     import json as json_mod
     from app.collector.ssh_collect import (
         get_ssh_settings, make_fqdn, ssh_connect, ssh_run,
-        bash_hardware, bash_disks, bash_network, bash_distro_fixed,
+        bash_hostname, bash_hardware, bash_disks, bash_network, bash_distro_fixed,
         bash_software, safe_json_parse,
     )
 
@@ -418,6 +418,37 @@ def _collect_stream_linux(host_id: int, host, db: Session):
             yield sse({"type": "error", "step": "connect", "message": f"Falha na conexão SSH: {str(e)[:200]}"})
             yield sse({"type": "done", "success": False, "message": "Falha na conexão SSH"})
             return
+
+        # ---- HOSTNAME ----
+        # Resolve o hostname real do host Linux e atualiza no banco se diferente
+        resolved_hostname = None
+        yield sse({"type": "step", "step": "hostname", "message": "🔍 Resolvendo hostname..."})
+        try:
+            raw = ssh_run(client, bash_hostname(), timeout=10)
+            hn_data = safe_json_parse(raw, "hostname")
+            if hn_data and hn_data.get("hostname"):
+                resolved_hostname = hn_data["hostname"].strip().upper()
+                fqdn = hn_data.get("fqdn", "").strip()
+                if resolved_hostname and resolved_hostname != host.hostname.upper():
+                    # Verifica se o novo hostname já não existe no banco
+                    existing = db.query(Host).filter(Host.hostname == resolved_hostname).first()
+                    if not existing:
+                        old_name = host.hostname
+                        host_obj = db.query(Host).filter(Host.id == host_id_val).first()
+                        host_obj.hostname = resolved_hostname
+                        if fqdn and fqdn.upper() != resolved_hostname:
+                            host_obj.domain = fqdn.split(".", 1)[1] if "." in fqdn else None
+                        db.commit()
+                        yield sse({"type": "step_ok", "step": "hostname", "message": f"✓ Hostname atualizado: {old_name} → {resolved_hostname}"})
+                    else:
+                        yield sse({"type": "step_warn", "step": "hostname", "message": f"⚠ Hostname resolvido '{resolved_hostname}' já existe no banco (ID {existing.id})"})
+                else:
+                    yield sse({"type": "step_ok", "step": "hostname", "message": f"✓ Hostname OK: {resolved_hostname}"})
+            else:
+                yield sse({"type": "step_warn", "step": "hostname", "message": "⚠ Não foi possível resolver o hostname"})
+        except Exception as e:
+            db.rollback()
+            yield sse({"type": "step_warn", "step": "hostname", "message": f"⚠ Falha ao resolver hostname: {str(e)[:80]}"})
 
         # Atualiza status
         host_obj = db.query(Host).filter(Host.id == host_id_val).first()
