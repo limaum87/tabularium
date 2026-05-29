@@ -369,7 +369,214 @@ def logged_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 @router.get("/{host_id}/action/collect-stream")
 def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """Coleta manual via SSE — roda cada step individualmente e envia progresso."""
+    """Coleta manual via SSE — detecta so_type e usa WinRM (Windows) ou SSH (Linux)."""
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+
+    # Detecta método de coleta pelo so_type
+    is_linux = host.so_type == "linux"
+
+    if is_linux:
+        return _collect_stream_linux(host_id, host, db)
+    else:
+        return _collect_stream_winrm(host_id, host, db)
+
+
+def _collect_stream_linux(host_id: int, host, db: Session):
+    """Coleta manual via SSH (Linux) com SSE."""
+    import json as json_mod
+    from app.collector.ssh_collect import (
+        get_ssh_settings, make_fqdn, ssh_connect, ssh_run,
+        bash_hardware, bash_disks, bash_network, bash_distro_fixed,
+        bash_software, safe_json_parse,
+    )
+
+    cfg = get_ssh_settings(db)
+    if not cfg:
+        raise HTTPException(status_code=400, detail="Credenciais SSH não configuradas. Configure em Configurações → SSH.")
+
+    host_id_val = host.id
+
+    def sse(data):
+        return f"data: {json_mod.dumps(data, ensure_ascii=False)}\n\n"
+
+    def event_stream():
+        yield sse({"type": "start", "hostname": host.hostname})
+
+        # Conecta SSH
+        target = make_fqdn(host.hostname, cfg.get("search", ""))
+        try:
+            yield sse({"type": "step", "step": "connect", "message": f"Conectando SSH em {target}..."})
+            client = ssh_connect(target, cfg)
+            # Teste rápido
+            uname = ssh_run(client, "uname -s", timeout=10)
+            if not uname:
+                raise RuntimeError("SSH não respondeu ao teste")
+            yield sse({"type": "step_ok", "step": "connect", "message": f"Conectado em {target} ({uname})"})
+        except Exception as e:
+            yield sse({"type": "error", "step": "connect", "message": f"Falha na conexão SSH: {str(e)[:200]}"})
+            yield sse({"type": "done", "success": False, "message": "Falha na conexão SSH"})
+            return
+
+        # Atualiza status
+        host_obj = db.query(Host).filter(Host.id == host_id_val).first()
+        host_obj.status = "online"
+        host_obj.so_type = "linux"
+        host_obj.last_seen = datetime.utcnow()
+        host_obj.updated_at = datetime.utcnow()
+        if host_obj.is_legacy:
+            host_obj.is_legacy = False
+            host_obj.legacy_since = None
+        db.commit()
+
+        now = datetime.utcnow()
+        total_success = 0
+        total_fail = 0
+
+        # ---- DISTRO ----
+        yield sse({"type": "step", "step": "distro", "message": "🐧 Coletando distribuição..."})
+        try:
+            raw = ssh_run(client, bash_distro_fixed(), timeout=15)
+            distro = safe_json_parse(raw, "distro")
+            if distro:
+                existing_d = db.query(HostDistro).filter(HostDistro.host_id == host_id_val).first()
+                d_data = {
+                    "name": distro.get("name"),
+                    "version": distro.get("version"),
+                    "distro_id": distro.get("distro_id"),
+                    "id_like": distro.get("id_like"),
+                    "pretty_name": distro.get("pretty_name"),
+                    "kernel": distro.get("kernel"),
+                    "arch": distro.get("arch"),
+                    "updated_at": now,
+                }
+                if existing_d:
+                    for k, v in d_data.items():
+                        setattr(existing_d, k, v)
+                else:
+                    db.add(HostDistro(host_id=host_id_val, **d_data))
+                db.commit()
+                pretty = distro.get("pretty_name") or distro.get("name") or "?"
+                yield sse({"type": "step_ok", "step": "distro", "message": f"✓ {pretty} ({distro.get('arch','?')})"})
+                total_success += 1
+            else:
+                yield sse({"type": "step_warn", "step": "distro", "message": "⚠ Distro retornou vazio"})
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "distro", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
+
+        # ---- HARDWARE ----
+        yield sse({"type": "step", "step": "hardware", "message": "📡 Coletando hardware..."})
+        try:
+            raw = ssh_run(client, bash_hardware(), timeout=15)
+            hw = safe_json_parse(raw, "hardware")
+            if hw:
+                existing = db.query(HostHardware).filter(HostHardware.host_id == host_id_val).first()
+                hw_data = {
+                    "manufacturer": hw.get("manufacturer"),
+                    "model": hw.get("model"),
+                    "serial": hw.get("serial"),
+                    "cpu": hw.get("cpu"),
+                    "ram_gb": hw.get("ram_gb"),
+                    "bios_version": hw.get("bios_version"),
+                    "last_boot": hw.get("last_boot"),
+                    "last_user": hw.get("last_user"),
+                    "updated_at": now,
+                }
+                if existing:
+                    for k, v in hw_data.items():
+                        setattr(existing, k, v)
+                else:
+                    db.add(HostHardware(host_id=host_id_val, **hw_data))
+                db.commit()
+                cpu = hw.get("cpu", "?")[:40]
+                ram = hw.get("ram_gb", "?")
+                yield sse({"type": "step_ok", "step": "hardware", "message": f"✓ CPU: {cpu} | RAM: {ram} GB"})
+                total_success += 1
+            else:
+                yield sse({"type": "step_warn", "step": "hardware", "message": "⚠ Hardware retornou vazio"})
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "hardware", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
+
+        # ---- DISCOS ----
+        yield sse({"type": "step", "step": "disks", "message": "💾 Coletando discos..."})
+        try:
+            raw = ssh_run(client, bash_disks(), timeout=15)
+            parsed = safe_json_parse(raw, "disks")
+            disks = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+            db.query(HostDisk).filter(HostDisk.host_id == host_id_val).delete()
+            for d in disks:
+                db.add(HostDisk(host_id=host_id_val, drive=d.get("drive"), total_gb=d.get("total_gb"), free_gb=d.get("free_gb"), filesystem=d.get("filesystem"), updated_at=now))
+            db.commit()
+            drives = ", ".join(d.get("drive", "?") for d in disks)
+            yield sse({"type": "step_ok", "step": "disks", "message": f"✓ {len(disks)} disco(s): {drives}"})
+            total_success += 1
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "disks", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
+
+        # ---- REDE ----
+        yield sse({"type": "step", "step": "network", "message": "🌐 Coletando rede..."})
+        try:
+            raw = ssh_run(client, bash_network(), timeout=15)
+            parsed = safe_json_parse(raw, "network")
+            network = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+            db.query(HostNetwork).filter(HostNetwork.host_id == host_id_val).delete()
+            for n in network:
+                db.add(HostNetwork(host_id=host_id_val, ip=n.get("ip"), mac=n.get("mac"), gateway=n.get("gateway"), dns=n.get("dns"), adapter_name=n.get("adapter_name"), updated_at=now))
+            db.commit()
+            ips = ", ".join(n.get("ip", "?") for n in network if n.get("ip"))
+            yield sse({"type": "step_ok", "step": "network", "message": f"✓ {len(network)} adaptador(es): {ips}"})
+            total_success += 1
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "network", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
+
+        # ---- SOFTWARE ----
+        yield sse({"type": "step", "step": "software", "message": "📦 Coletando softwares (pode demorar)..."})
+        try:
+            raw = ssh_run(client, bash_software(), timeout=60)
+            parsed = safe_json_parse(raw, "software")
+            software = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+            db.query(HostSoftware).filter(HostSoftware.host_id == host_id_val).delete()
+            for sw in software:
+                db.add(HostSoftware(host_id=host_id_val, name=sw.get("name"), version=sw.get("version"), publisher=sw.get("publisher"), install_date=sw.get("install_date"), install_location=sw.get("install_location"), updated_at=now))
+            db.commit()
+            yield sse({"type": "step_ok", "step": "software", "message": f"✓ {len(software)} software(s) instalados"})
+            total_success += 1
+        except Exception as e:
+            yield sse({"type": "step_fail", "step": "software", "message": f"✗ Falha: {str(e)[:100]}"})
+            total_fail += 1
+
+        # ---- DONE ----
+        client.close()
+
+        db.add(ScanHistory(host_id=host_id_val, hostname=host.hostname, status="success", started_at=now, finished_at=datetime.utcnow()))
+        log_activity(db,
+            activity_type="manual_collect",
+            hostname=host.hostname,
+            host_id=host_id_val,
+            status="success" if total_fail == 0 else "partial",
+            message=f"Coleta SSH manual: {total_success} OK, {total_fail} falha(s)",
+            details={"success": total_success, "fail": total_fail, "method": "ssh"},
+            source="manual",
+        )
+        db.commit()
+
+        yield sse({
+            "type": "done",
+            "success": total_fail == 0,
+            "message": f"Coleta concluída: {total_success} OK, {total_fail} falha(s)",
+            "stats": {"success": total_success, "fail": total_fail},
+        })
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+def _collect_stream_winrm(host_id: int, host, db: Session):
+    """Coleta manual via WinRM (Windows) com SSE."""
     import json as json_mod
     import winrm
     from app.collector.winrm_collect import _get_settings, _make_fqdn, _connect, _run_ps, _run_ps_with_timeout, _safe_json
@@ -379,13 +586,9 @@ def action_collect_stream(host_id: int, db: Session = Depends(get_db), _=Depends
         _ps_anydesk, _ps_ultravnc,
     )
 
-    host = db.query(Host).filter(Host.id == host_id).first()
-    if not host:
-        raise HTTPException(status_code=404, detail="Host não encontrado")
-
     cfg = _get_settings(db)
     if not cfg:
-        raise HTTPException(status_code=400, detail="Credenciais WinRM não configuradas")
+        raise HTTPException(status_code=400, detail="Credenciais WinRM não configuradas. Configure em Configurações → WinRM.")
 
     host_id_val = host.id
 
