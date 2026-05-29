@@ -99,7 +99,7 @@ echo '}'
 
 def bash_disks():
     return r"""
-df -B1073741824 --output=source,size,avail,fstype 2>/dev/null | tail -n +2 | grep -v 'tmpfs\|devtmpfs\|squashfs\|overlay\|shm' | awk '{
+df -B1073741824 --output=target,size,avail,fstype 2>/dev/null | tail -n +2 | grep -v 'tmpfs\|devtmpfs\|squashfs\|overlay\|shm' | awk '{
     gsub(/^ +/, "", $1);
     gsub(/^ +/, "", $2);
     gsub(/^ +/, "", $3);

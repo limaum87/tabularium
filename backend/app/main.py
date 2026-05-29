@@ -862,6 +862,22 @@ def _migrate_db():
     finally:
         conn.close()
 
+    # Alarga coluna drive de host_disks para suportar paths Linux
+    try:
+        inspector = sqlalchemy.inspect(engine)
+        disk_cols = {col['name']: col['type'] for col in inspector.get_columns('host_disks')}
+        drive_type = disk_cols.get('drive')
+        if drive_type and hasattr(drive_type, 'length') and (drive_type.length or 0) < 50:
+            conn = engine.connect()
+            conn.execute(sqlalchemy.text(
+                "ALTER TABLE host_disks MODIFY COLUMN drive VARCHAR(50)"
+            ))
+            conn.commit()
+            conn.close()
+            print("[migration] Alargado coluna drive de host_disks para VARCHAR(50)")
+    except Exception as e:
+        print(f"[migration] Erro ao alargar drive: {e}")
+
     # Cria tabela host_distro se não existir
     try:
         tables = sqlalchemy.inspect(engine).get_table_names()

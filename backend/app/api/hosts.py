@@ -463,6 +463,7 @@ def _collect_stream_linux(host_id: int, host, db: Session):
             else:
                 yield sse({"type": "step_warn", "step": "distro", "message": "⚠ Distro retornou vazio"})
         except Exception as e:
+            db.rollback()
             yield sse({"type": "step_fail", "step": "distro", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 
@@ -497,6 +498,7 @@ def _collect_stream_linux(host_id: int, host, db: Session):
             else:
                 yield sse({"type": "step_warn", "step": "hardware", "message": "⚠ Hardware retornou vazio"})
         except Exception as e:
+            db.rollback()
             yield sse({"type": "step_fail", "step": "hardware", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 
@@ -514,6 +516,7 @@ def _collect_stream_linux(host_id: int, host, db: Session):
             yield sse({"type": "step_ok", "step": "disks", "message": f"✓ {len(disks)} disco(s): {drives}"})
             total_success += 1
         except Exception as e:
+            db.rollback()
             yield sse({"type": "step_fail", "step": "disks", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 
@@ -531,6 +534,7 @@ def _collect_stream_linux(host_id: int, host, db: Session):
             yield sse({"type": "step_ok", "step": "network", "message": f"✓ {len(network)} adaptador(es): {ips}"})
             total_success += 1
         except Exception as e:
+            db.rollback()
             yield sse({"type": "step_fail", "step": "network", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 
@@ -547,6 +551,7 @@ def _collect_stream_linux(host_id: int, host, db: Session):
             yield sse({"type": "step_ok", "step": "software", "message": f"✓ {len(software)} software(s) instalados"})
             total_success += 1
         except Exception as e:
+            db.rollback()
             yield sse({"type": "step_fail", "step": "software", "message": f"✗ Falha: {str(e)[:100]}"})
             total_fail += 1
 

@@ -87,7 +87,7 @@ class HostDisk(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     host_id = Column(Integer, nullable=False, index=True)
-    drive = Column(String(10), nullable=True)
+    drive = Column(String(50), nullable=True)
     total_gb = Column(Float, nullable=True)
     free_gb = Column(Float, nullable=True)
     filesystem = Column(String(50), nullable=True)
