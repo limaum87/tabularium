@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.core.database import (
-    get_db, HostSoftware, HostLicense, ScanHistory, Host,
+    get_db, HostSoftware, HostLicense, ScanHistory, Host, HostHardware, HostNetwork,
 )
 from app.core.security import get_current_user
 from app.api.hosts import _auto_legacy_check
@@ -131,6 +131,131 @@ def os_versions(db: Session = Depends(get_db), _=Depends(get_current_user)):
         result.append({"os": "Desconhecido", "count": unknown_count})
 
     return result
+
+
+@router.get("/api/windows-versions")
+def windows_versions(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Lista todos os hosts Windows com detalhes de versão (Windows 10/11, build, edition)."""
+    _auto_legacy_check(db)
+
+    # Busca todos os hosts Windows ativos
+    hosts = db.query(Host).filter(
+        Host.so_type == "windows",
+        Host.is_legacy == False,
+    ).order_by(Host.hostname).all()
+
+    host_ids = [h.id for h in hosts]
+
+    # Busca licenças Windows de uma vez
+    lic_map = {}
+    if host_ids:
+        lics = db.query(HostLicense).filter(
+            HostLicense.product == "windows",
+            HostLicense.host_id.in_(host_ids),
+        ).all()
+        for lic in lics:
+            lic_map[lic.host_id] = lic
+
+    # Busca hardware de uma vez
+    hw_map = {}
+    if host_ids:
+        hws = db.query(HostHardware).filter(
+            HostHardware.host_id.in_(host_ids),
+        ).all()
+        for hw in hws:
+            hw_map[hw.host_id] = hw
+
+    # Busca rede de uma vez (primeiro IP)
+    net_map = {}
+    if host_ids:
+        nets = db.query(HostNetwork).filter(
+            HostNetwork.host_id.in_(host_ids),
+            HostNetwork.ip != None,
+        ).all()
+        for net in nets:
+            if net.host_id not in net_map:
+                net_map[net.host_id] = net
+
+    # Classifica Windows 10 vs 11 pelo build number
+    # Build >= 22000 = Windows 11, < 22000 = Windows 10
+    def classify_windows(edition, version):
+        """Retorna (os_name, build, edition_clean)."""
+        build = version or ""
+        edition_clean = edition or ""
+
+        # Tenta extrair build number
+        build_num = 0
+        try:
+            build_num = int(build)
+        except (ValueError, TypeError):
+            pass
+
+        if build_num >= 22000:
+            os_name = "Windows 11"
+        elif build_num > 0:
+            os_name = "Windows 10"
+        else:
+            # Fallback: tenta pela edition string
+            ed_lower = edition_clean.lower()
+            if "windows 11" in ed_lower or "11" in ed_lower:
+                os_name = "Windows 11"
+            elif "windows 10" in ed_lower or "10" in ed_lower:
+                os_name = "Windows 10"
+            else:
+                os_name = "Windows (versão desconhecida)"
+
+        # Limpa edition (remove "10 Pro" → "Pro", etc)
+        for prefix in ["Microsoft Windows 11 ", "Microsoft Windows 10 ", "Windows 11 ", "Windows 10 ", "Windows "]:
+            if edition_clean.startswith(prefix):
+                edition_clean = edition_clean[len(prefix):]
+                break
+
+        return os_name, build, edition_clean
+
+    result = []
+    for h in hosts:
+        lic = lic_map.get(h.id)
+        hw = hw_map.get(h.id)
+        net = net_map.get(h.id)
+
+        edition = lic.edition if lic else None
+        version = lic.version if lic else None
+        license_status = lic.license_status if lic else None
+        partial_key = lic.partial_product_key if lic else None
+        channel = lic.channel if lic else None
+
+        os_name, build, edition_clean = classify_windows(edition, version)
+
+        result.append({
+            "host_id": h.id,
+            "hostname": h.hostname,
+            "domain": h.domain,
+            "status": h.status,
+            "os_name": os_name,
+            "build": build,
+            "edition": edition_clean,
+            "license_status": license_status,
+            "license_channel": channel,
+            "partial_product_key": partial_key,
+            "manufacturer": hw.manufacturer if hw else None,
+            "model": hw.model if hw else None,
+            "cpu": hw.cpu if hw else None,
+            "ram_gb": hw.ram_gb if hw else None,
+            "ip": net.ip if net else None,
+            "last_seen": h.last_seen.isoformat() if h.last_seen else None,
+        })
+
+    # Resumo por versão
+    summary = {}
+    for r in result:
+        key = f"{r['os_name']} (Build {r['build']})" if r['build'] else r['os_name']
+        if key not in summary:
+            summary[key] = {"os_name": r['os_name'], "build": r['build'], "edition": r['edition'], "count": 0}
+        summary[key]["count"] += 1
+
+    summary_list = sorted(summary.values(), key=lambda x: (-x["count"], x["os_name"]))
+
+    return {"hosts": result, "summary": summary_list, "total": len(result)}
 
 
 @router.get("/api/compliance")

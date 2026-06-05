@@ -29,6 +29,7 @@ function loadLayout(activePage) {
         { id: 'logged-users', icon: '⊙', label: 'Usuários Logados', href: '/logged-users.html' },
         { id: 'software', icon: '◈', label: 'Softwares', href: '/software.html' },
         { id: 'licenses', icon: '◎', label: 'Licenças', href: '/licenses.html' },
+        { id: 'windows-versions', icon: '⊞', label: 'Versões Windows', href: '/windows-versions.html' },
     ];
 
     if (isAdmin) {

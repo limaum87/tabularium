@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Versões Windows</title>
+    <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .version-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 28px;
+        }
+        .version-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            cursor: pointer;
+            transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+        }
+        .version-card:hover {
+            border-color: var(--border-accent);
+            background: var(--bg-card-hover);
+        }
+        .version-card.active {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px var(--accent-glow), inset 0 0 20px var(--accent-glow);
+        }
+        .version-card .vc-os {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 6px;
+        }
+        .version-card .vc-os.win10 { color: var(--info); }
+        .version-card .vc-os.win11 { color: var(--success); }
+        .version-card .vc-os.win-unknown { color: var(--warning); }
+        .version-card .vc-build {
+            font-family: var(--font-mono);
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--text-primary);
+            line-height: 1.2;
+        }
+        .version-card .vc-edition {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        .version-card .vc-count {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 12px;
+            padding: 4px 10px;
+            background: var(--accent-dim);
+            border-radius: 20px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .filter-bar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .filter-chip {
+            padding: 6px 14px;
+            border-radius: 20px;
+            border: 1px solid var(--border-medium);
+            background: transparent;
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .filter-chip:hover {
+            border-color: var(--border-accent);
+            color: var(--text-primary);
+        }
+        .filter-chip.active {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .host-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 120px 100px 100px 100px 100px 140px;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border-subtle);
+            font-size: 13px;
+            transition: background 0.15s;
+        }
+        .host-row:hover {
+            background: var(--accent-glow);
+        }
+        .host-row.header {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid var(--border-medium);
+            padding-bottom: 10px;
+        }
+        .host-row.header:hover { background: none; }
+        .host-link {
+            font-family: var(--font-mono);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--accent);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+        .host-link:hover {
+            color: #e8c84a;
+            text-decoration: underline;
+        }
+        .os-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .os-badge.win10 {
+            background: var(--info-dim);
+            color: var(--info);
+        }
+        .os-badge.win11 {
+            background: var(--success-dim);
+            color: var(--success);
+        }
+        .os-badge.win-unknown {
+            background: var(--warning-dim);
+            color: var(--warning);
+        }
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-dot.online { background: var(--success); box-shadow: 0 0 6px var(--success); }
+        .status-dot.offline { background: var(--danger); }
+        .status-dot.unknown { background: var(--text-muted); }
+
+        .stat-bar {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 24px;
+            padding: 16px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-medium);
+            border-radius: var(--radius-lg);
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .stat-item .stat-label {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        .stat-item .stat-value {
+            font-family: var(--font-mono);
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .stat-item .stat-value .stat-sub {
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--text-secondary);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+        .empty-state .empty-title {
+            font-family: var(--font-mono);
+            font-size: 15px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+        .empty-state .empty-desc {
+            font-size: 13px;
+            max-width: 400px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+
+        .build-name {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+    </style>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('windows-versions');
+
+        const mainContent = document.querySelector('.main-content');
+
+        // Mapa de build → nome amigável
+        const buildNames = {
+            '10240': 'Threshold 1 (1507)',
+            '10586': 'Threshold 2 (1511)',
+            '14393': 'Redstone 1 (1607)',
+            '15063': 'Redstone 2 (1703)',
+            '16299': 'Redstone 3 (1709)',
+            '17134': 'Redstone 4 (1803)',
+            '17763': 'Redstone 5 (1809)',
+            '18362': '19H1 (1903)',
+            '18363': '19H2 (1909)',
+            '19041': '20H1 (2004)',
+            '19042': '20H2 (20H2)',
+            '19043': '21H1 (21H1)',
+            '19044': '21H2 (Win10)',
+            '19045': '22H2 (Win10)',
+            '22000': '21H2 (Win11)',
+            '22621': '22H2 (Win11)',
+            '22631': '23H2 (Win11)',
+            '26100': '24H2 (Win11)',
+        };
+
+        function getBuildName(build) {
+            return buildNames[build] || '';
+        }
+
+        function getOsClass(osName) {
+            if (osName.includes('11')) return 'win11';
+            if (osName.includes('10')) return 'win10';
+            return 'win-unknown';
+        }
+
+        async function loadWindowsVersions() {
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div>
+                    <h1>Versões Windows</h1>
+                    <p class="page-subtitle">Detalhamento das versões do Windows instaladas nos hosts</p>
+                </div>
+            </div>
+            <div class="page-body">
+                <div style="text-align:center;padding:40px;color:var(--text-muted);font-family:var(--font-mono);">
+                    Carregando...
+                </div>
+            </div>
+            `;
+
+            const res = await apiFetch('/api/windows-versions');
+            if (!res) return;
+            const data = await res.json();
+            const hosts = data.hosts || [];
+            const summary = data.summary || [];
+            const total = data.total || 0;
+
+            // Conta Win10 vs Win11
+            const win10Count = hosts.filter(h => h.os_name === 'Windows 10').length;
+            const win11Count = hosts.filter(h => h.os_name === 'Windows 11').length;
+            const winUnknown = total - win10Count - win11Count;
+
+            // Status
+            const onlineCount = hosts.filter(h => h.status === 'online').length;
+
+            // Unique builds
+            const uniqueBuilds = [...new Set(hosts.map(h => h.build).filter(Boolean))].length;
+
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div>
+                    <h1>Versões Windows</h1>
+                    <p class="page-subtitle">Detalhamento das versões do Windows instaladas nos hosts</p>
+                </div>
+            </div>
+            <div class="page-body">
+
+                <!-- Stats -->
+                <div class="stat-bar">
+                    <div class="stat-item">
+                        <span class="stat-label">Total Windows</span>
+                        <span class="stat-value">${total}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Windows 10</span>
+                        <span class="stat-value" style="color:var(--info);">${win10Count} <span class="stat-sub">hosts</span></span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Windows 11</span>
+                        <span class="stat-value" style="color:var(--success);">${win11Count} <span class="stat-sub">hosts</span></span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Builds únicos</span>
+                        <span class="stat-value">${uniqueBuilds}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Online</span>
+                        <span class="stat-value">${onlineCount} <span class="stat-sub">/ ${total}</span></span>
+                    </div>
+                </div>
+
+                <!-- Version cards (summary) -->
+                <div class="version-cards" id="version-cards"></div>
+
+                <!-- Filters -->
+                <div class="panel animate-in">
+                    <div class="panel-header" style="flex-wrap:wrap;gap:12px;">
+                        <span class="panel-title">Hosts Windows</span>
+                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                            <div class="filter-bar" id="filter-bar" style="margin-bottom:0;">
+                                <button class="filter-chip active" data-filter="all">Todos</button>
+                                <button class="filter-chip" data-filter="win10">Win 10</button>
+                                <button class="filter-chip" data-filter="win11">Win 11</button>
+                            </div>
+                            <input type="text" class="form-control-dark" id="search-hosts"
+                                   placeholder="Buscar hostname, IP, edition..."
+                                   style="width:260px;padding:8px 14px;font-size:12px;">
+                        </div>
+                    </div>
+                    <div class="panel-body" style="padding-top:0;">
+                        <!-- Table header -->
+                        <div class="host-row header">
+                            <div>Hostname</div>
+                            <div>SO / Build</div>
+                            <div>Edition</div>
+                            <div>Status</div>
+                            <div>Licença</div>
+                            <div>IP</div>
+                            <div>RAM</div>
+                            <div>Última Coleta</div>
+                        </div>
+                        <div id="hosts-list"></div>
+                    </div>
+                </div>
+            </div>
+            `;
+
+            // Render version cards
+            const cardsContainer = document.getElementById('version-cards');
+            if (summary.length === 0) {
+                cardsContainer.innerHTML = '';
+            } else {
+                cardsContainer.innerHTML = summary.map(s => {
+                    const osClass = getOsClass(s.os_name);
+                    const buildLabel = s.build ? `Build ${s.build}` : 'Build desconhecido';
+                    const bName = getBuildName(s.build);
+                    return `
+                    <div class="version-card" data-build="${s.build || ''}" data-os="${osClass}">
+                        <div class="vc-os ${osClass}">${s.os_name}</div>
+                        <div class="vc-build">${buildLabel}</div>
+                        ${bName ? `<div class="build-name">${bName}</div>` : ''}
+                        ${s.edition ? `<div class="vc-edition">${s.edition}</div>` : ''}
+                        <div class="vc-count">${s.count} host(s)</div>
+                    </div>`;
+                }).join('');
+            }
+
+            // Card click → filter by build
+            let activeBuildFilter = null;
+            cardsContainer.querySelectorAll('.version-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    const build = card.dataset.build;
+                    if (activeBuildFilter === build) {
+                        // Desativa
+                        activeBuildFilter = null;
+                        card.classList.remove('active');
+                    } else {
+                        cardsContainer.querySelectorAll('.version-card').forEach(c => c.classList.remove('active'));
+                        card.classList.add('active');
+                        activeBuildFilter = build;
+                    }
+                    renderHosts();
+                });
+            });
+
+            // Filter chips
+            let activeOsFilter = 'all';
+            document.querySelectorAll('.filter-chip').forEach(chip => {
+                chip.addEventListener('click', () => {
+                    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+                    chip.classList.add('active');
+                    activeOsFilter = chip.dataset.filter;
+                    activeBuildFilter = null;
+                    cardsContainer.querySelectorAll('.version-card').forEach(c => c.classList.remove('active'));
+                    renderHosts();
+                });
+            });
+
+            // Search
+            let searchTerm = '';
+            document.getElementById('search-hosts').addEventListener('input', (e) => {
+                searchTerm = e.target.value.toLowerCase();
+                renderHosts();
+            });
+
+            function renderHosts() {
+                const listEl = document.getElementById('hosts-list');
+                let filtered = hosts;
+
+                // OS filter
+                if (activeOsFilter === 'win10') {
+                    filtered = filtered.filter(h => h.os_name === 'Windows 10');
+                } else if (activeOsFilter === 'win11') {
+                    filtered = filtered.filter(h => h.os_name === 'Windows 11');
+                }
+
+                // Build filter
+                if (activeBuildFilter !== null) {
+                    filtered = filtered.filter(h => (h.build || '') === activeBuildFilter);
+                }
+
+                // Search filter
+                if (searchTerm) {
+                    filtered = filtered.filter(h =>
+                        (h.hostname || '').toLowerCase().includes(searchTerm) ||
+                        (h.ip || '').toLowerCase().includes(searchTerm) ||
+                        (h.edition || '').toLowerCase().includes(searchTerm) ||
+                        (h.os_name || '').toLowerCase().includes(searchTerm) ||
+                        (h.build || '').includes(searchTerm)
+                    );
+                }
+
+                if (filtered.length === 0) {
+                    listEl.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">🖥️</div>
+                        <div class="empty-title">Nenhum host encontrado</div>
+                        <div class="empty-desc">Ajuste os filtros ou realize coletas nos hosts Windows para visualizar as versões.</div>
+                    </div>`;
+                    return;
+                }
+
+                listEl.innerHTML = filtered.map(h => {
+                    const osClass = getOsClass(h.os_name);
+                    const statusClass = h.status || 'unknown';
+                    const ram = h.ram_gb ? h.ram_gb + ' GB' : '—';
+                    const ip = h.ip || '—';
+                    const buildDisplay = h.build ? `Build ${h.build}` : '—';
+                    const bName = getBuildName(h.build);
+                    const lastSeen = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
+
+                    // License status badge
+                    let licBadge = '—';
+                    if (h.license_status) {
+                        const licClass = h.license_status === 'Licensed' ? 'color:var(--success)' : 'color:var(--danger)';
+                        licBadge = `<span style="font-family:var(--font-mono);font-size:11px;font-weight:600;${licClass}">${h.license_status}</span>`;
+                    }
+
+                    return `
+                    <div class="host-row">
+                        <div><a href="/host-detail.html?id=${h.host_id}" class="host-link">${h.hostname}</a></div>
+                        <div>
+                            <span class="os-badge ${osClass}">${h.os_name}</span>
+                            <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);margin-left:6px;">${buildDisplay}</span>
+                            ${bName ? `<div class="build-name" style="margin-left:2px;">${bName}</div>` : ''}
+                        </div>
+                        <div style="font-size:12px;color:var(--text-secondary);">${h.edition || '—'}</div>
+                        <div><span class="status-dot ${statusClass}"></span><span style="font-size:12px;">${statusClass}</span></div>
+                        <div>${licBadge}</div>
+                        <div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">${ip}</div>
+                        <div style="font-family:var(--font-mono);font-size:12px;">${ram}</div>
+                        <div style="font-size:12px;color:var(--text-muted);">${lastSeen}</div>
+                    </div>`;
+                }).join('');
+            }
+
+            renderHosts();
+        }
+
+        loadWindowsVersions();
+    </script>
+</body>
+</html>
