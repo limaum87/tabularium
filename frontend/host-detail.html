@@ -152,6 +152,7 @@
                     <button class="action-btn-detail" onclick="runDetailAction('test-winrm')" id="btn-test-winrm">🔌 Testar WinRM</button>
                     <button class="action-btn-detail" onclick="runDetailAction('enable-winrm')" id="btn-enable-winrm">⚡ Ativar WinRM</button>
                     <button class="action-btn-detail" onclick="runDetailAction('collect')" id="btn-collect" style="border-color:var(--accent);color:var(--accent);">🔄 Coletar Dados</button>
+                    ${!h.is_legacy ? `<button class="action-btn-detail" onclick="moveToLegacy()" id="btn-legacy" style="border-color:var(--danger);color:var(--danger);">⊘ Mover para Legados</button>` : `<span class="badge-status badge-warning" style="font-size:13px;padding:8px 14px;">⊘ Host Legado</span>`}
                 </div>
                 <div id="action-result" style="display:none;"></div>
             </div>
@@ -329,6 +330,36 @@
         }
 
         loadHost();
+
+        async function moveToLegacy() {
+            if (!confirm('Deseja realmente mover este host para legados? Ele deixará de aparecer na listagem principal de hosts.')) return;
+            const btn = document.getElementById('btn-legacy');
+            const resultEl = document.getElementById('action-result');
+            if (btn) { btn.disabled = true; btn.textContent = '⏳ Movendo...'; }
+            try {
+                const res = await apiFetch(`/api/hosts/${hostId}/move-to-legacy`, { method: 'POST' });
+                if (!res) {
+                    resultEl.style.display = 'block';
+                    resultEl.innerHTML = '<div class="action-result error">✗ Erro de conexão com a API</div>';
+                    return;
+                }
+                const data = await res.json();
+                if (res.ok) {
+                    resultEl.style.display = 'block';
+                    resultEl.innerHTML = `<div class="action-result success">✓ ${data.detail}</div>`;
+                    setTimeout(() => { window.location.href = '/hosts.html'; }, 2000);
+                } else {
+                    resultEl.style.display = 'block';
+                    resultEl.innerHTML = `<div class="action-result error">✗ ${data.detail}</div>`;
+                    if (btn) { btn.disabled = false; btn.textContent = '⊘ Mover para Legados'; }
+                }
+            } catch (err) {
+                resultEl.style.display = 'block';
+                resultEl.innerHTML = `<div class="action-result error">✗ ${err.message}</div>`;
+                if (btn) { btn.disabled = false; btn.textContent = '⊘ Mover para Legados'; }
+            }
+            setTimeout(() => { resultEl.style.display = 'none'; }, 20000);
+        }
 
         async function runDetailAction(action) {
             const btnMap = { 'ping': 'btn-ping', 'test-winrm': 'btn-test-winrm', 'enable-winrm': 'btn-enable-winrm', 'collect': 'btn-collect' };

@@ -260,6 +260,21 @@ def restore_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_curr
     return {"detail": f"Host {host.hostname} restaurado para ativo"}
 
 
+@router.post("/{host_id}/move-to-legacy")
+def move_to_legacy(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Move manualmente um host ativo para legados."""
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+    if host.is_legacy:
+        raise HTTPException(status_code=400, detail="Host já é legado")
+    host.is_legacy = True
+    host.legacy_since = datetime.utcnow()
+    host.updated_at = datetime.utcnow()
+    db.commit()
+    return {"detail": f"Host {host.hostname} movido para legados"}
+
+
 @router.post("/ping-sweep")
 def ping_sweep(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Força ping em todos os hosts ativos e retorna resultado."""
