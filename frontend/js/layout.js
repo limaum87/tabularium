@@ -30,6 +30,8 @@ function loadLayout(activePage) {
         { id: 'software', icon: '◈', label: 'Softwares', href: '/software.html' },
         { id: 'licenses', icon: '◎', label: 'Licenças', href: '/licenses.html' },
         { id: 'windows-versions', icon: '⊞', label: 'Versões Windows', href: '/windows-versions.html' },
+        { section: 'Segurança' },
+        { id: 'patches', icon: '🩹', label: 'Patch Compliance', href: '/patches.html' },
     ];
 
     if (isAdmin) {

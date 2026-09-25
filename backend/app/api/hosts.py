@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.database import (
     get_db, Host, HostHardware, HostDisk, HostNetwork,
     HostLicense, HostSoftware, HostRemoteAccess, ScanHistory, HostDistro,
+    HostPatch, HostPendingUpdate, HostPatchStatus,
 )
 from app.core.security import get_current_user
 from app.schemas.schemas import CheckinPayload, HostResponse
@@ -196,6 +197,57 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
                 publisher=sw.publisher,
                 install_date=sw.install_date,
                 install_location=sw.install_location,
+                updated_at=now,
+            ))
+
+    # Patches — status geral (1 linha por host)
+    if body.patch_status is not None:
+        ps_data = body.patch_status or {}
+        pending_count = len(body.pending_updates) if body.pending_updates else 0
+        critical = sum(
+            1 for p in (body.pending_updates or [])
+            if (p.severity or "").lower() == "critical"
+        )
+        existing_ps = db.query(HostPatchStatus).filter(HostPatchStatus.host_id == host_id).first()
+        ps_values = {
+            "os_edition": ps_data.get("os_edition"),
+            "display_version": ps_data.get("display_version"),
+            "build": ps_data.get("build"),
+            "wu_last_success": ps_data.get("wu_last_success"),
+            "pending_count": pending_count,
+            "critical_pending": critical,
+            "last_error": ps_data.get("last_error"),
+            "last_scan": now,
+            "updated_at": now,
+        }
+        if existing_ps:
+            for k, v in ps_values.items():
+                setattr(existing_ps, k, v)
+        else:
+            db.add(HostPatchStatus(host_id=host_id, **ps_values))
+
+    # KBs instalados (apaga e recria)
+    if body.patches is not None:
+        db.query(HostPatch).filter(HostPatch.host_id == host_id).delete()
+        for p in body.patches:
+            db.add(HostPatch(
+                host_id=host_id,
+                kb=p.kb,
+                description=p.description,
+                installed_on=p.installed_on,
+                updated_at=now,
+            ))
+
+    # Updates pendentes (apaga e recria)
+    if body.pending_updates is not None:
+        db.query(HostPendingUpdate).filter(HostPendingUpdate.host_id == host_id).delete()
+        for p in body.pending_updates:
+            db.add(HostPendingUpdate(
+                host_id=host_id,
+                kb=p.kb,
+                title=p.title,
+                severity=p.severity,
+                reboot_required=p.reboot or False,
                 updated_at=now,
             ))
 
@@ -872,6 +924,103 @@ def _collect_stream_winrm(host_id: int, host, db: Session):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@router.get("/{host_id}/action/scan-updates-stream")
+def action_scan_updates_stream(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Escaneia patches do host via SSE: KBs instalados + updates pendentes + build."""
+    import json as json_mod
+    from app.collector.winrm_collect import _get_settings, scan_host_patches
+    from app.core.database import HostPatch, HostPendingUpdate, HostPatchStatus
+
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+
+    cfg = _get_settings(db)
+    if not cfg:
+        raise HTTPException(status_code=400, detail="Credenciais WinRM não configuradas. Configure em Configurações → WinRM.")
+
+    def sse(data):
+        return f"data: {json_mod.dumps(data, ensure_ascii=False)}\n\n"
+
+    def event_stream():
+        yield sse({"type": "start", "hostname": host.hostname})
+        now = datetime.utcnow()
+
+        steps = []
+        try:
+            result = scan_host_patches(host.hostname, cfg, on_step=lambda m: steps.append(m))
+        except Exception as e:
+            yield sse({"type": "error", "step": "connect", "message": f"Falha na conexão: {str(e)[:200]}"})
+            yield sse({"type": "done", "success": False, "message": "Falha na conexão WinRM"})
+            return
+
+        # Reproduz os passos no console
+        for m in steps:
+            cls = "step_ok" if m.startswith("✓") else "step_warn" if m.startswith("⚠") else "step"
+            yield sse({"type": cls, "step": "patches", "message": m})
+
+        # Persiste no banco
+        hotfixes = result.get("hotfixes", [])
+        pending = result.get("pending", [])
+        status = result.get("status", {})
+
+        db.query(HostPatch).filter(HostPatch.host_id == host_id).delete()
+        for p in hotfixes:
+            db.add(HostPatch(host_id=host_id, kb=p.get("kb"), description=p.get("description"), installed_on=p.get("installed_on"), updated_at=now))
+
+        db.query(HostPendingUpdate).filter(HostPendingUpdate.host_id == host_id).delete()
+        for p in pending:
+            db.add(HostPendingUpdate(host_id=host_id, kb=p.get("kb"), title=p.get("title"), severity=p.get("severity"), reboot_required=bool(p.get("reboot")), updated_at=now))
+
+        critical = sum(1 for p in pending if (p.get("severity") or "").lower() == "critical")
+        existing_ps = db.query(HostPatchStatus).filter(HostPatchStatus.host_id == host_id).first()
+        ps_values = {
+            "os_edition": status.get("os_edition"),
+            "display_version": status.get("display_version"),
+            "build": status.get("build"),
+            "wu_last_success": status.get("wu_last_success"),
+            "pending_count": len(pending),
+            "critical_pending": critical,
+            "last_error": status.get("last_error"),
+            "last_scan": now,
+            "updated_at": now,
+        }
+        if existing_ps:
+            for k, v in ps_values.items():
+                setattr(existing_ps, k, v)
+        else:
+            db.add(HostPatchStatus(host_id=host_id, **ps_values))
+
+        # Atualiza host
+        host.status = "online"
+        host.so_type = "windows"
+        host.last_seen = now
+        host.updated_at = now
+        if host.is_legacy:
+            host.is_legacy = False
+            host.legacy_since = None
+
+        log_activity(db,
+            activity_type="manual_collect",
+            hostname=host.hostname,
+            host_id=host_id,
+            status="success",
+            message=f"Scan de updates: {len(hotfixes)} KBs, {len(pending)} pendente(s)",
+            details={"hotfixes": len(hotfixes), "pending": len(pending), "critical": critical},
+            source="manual",
+        )
+        db.commit()
+
+        yield sse({
+            "type": "done",
+            "success": True,
+            "message": f"Scan concluído: {len(hotfixes)} KBs instalados, {len(pending)} update(s) pendente(s)",
+            "stats": {"hotfixes": len(hotfixes), "pending": len(pending), "critical": critical},
+        })
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @router.delete("/{host_id}")
 def delete_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Exclui permanentemente um host e todos os dados associados."""
@@ -1268,6 +1417,10 @@ def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_
         .all()
     )
 
+    patches = db.query(HostPatch).filter(HostPatch.host_id == host_id).order_by(HostPatch.installed_on.desc()).limit(200).all()
+    pending_updates = db.query(HostPendingUpdate).filter(HostPendingUpdate.host_id == host_id).all()
+    patch_status = db.query(HostPatchStatus).filter(HostPatchStatus.host_id == host_id).first()
+
     return {
         "host": HostResponse.model_validate(host),
         "hardware": hardware,
@@ -1278,4 +1431,7 @@ def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_
         "remote_access": remote_access,
         "distro": distro,
         "scans": scans,
+        "patches": patches,
+        "pending_updates": pending_updates,
+        "patch_status": patch_status,
     }

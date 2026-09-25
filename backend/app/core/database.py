@@ -201,6 +201,48 @@ class Setting(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class HostPatch(Base):
+    """KB instalado no host (Get-HotFix)."""
+    __tablename__ = "host_patches"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    host_id = Column(Integer, nullable=False, index=True)
+    kb = Column(String(20), nullable=True, index=True)
+    description = Column(String(100), nullable=True)  # Security Update, Hotfix, etc
+    installed_on = Column(String(20), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class HostPendingUpdate(Base):
+    """Update pendente detectado via Microsoft.Update.Session (COM)."""
+    __tablename__ = "host_pending_updates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    host_id = Column(Integer, nullable=False, index=True)
+    kb = Column(String(20), nullable=True, index=True)
+    title = Column(String(500), nullable=True)
+    severity = Column(String(20), nullable=True)  # Critical, Important, Moderate, Low, None
+    reboot_required = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class HostPatchStatus(Base):
+    """Status de atualização do host (1 linha por host)."""
+    __tablename__ = "host_patch_status"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    host_id = Column(Integer, nullable=False, index=True)
+    os_edition = Column(String(255), nullable=True)
+    display_version = Column(String(20), nullable=True)  # 22H2, 23H2...
+    build = Column(String(30), nullable=True)  # 19045.4046
+    wu_last_success = Column(String(50), nullable=True)  # último WU OK (registry)
+    pending_count = Column(Integer, default=0)
+    critical_pending = Column(Integer, default=0)
+    last_error = Column(Text, nullable=True)
+    last_scan = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class HostDistro(Base):
     __tablename__ = "host_distro"
 

@@ -27,7 +27,15 @@ Uma tarefa NÃO é considerada concluída até que a notificação tenha sido en
 
 ## Endpoint de notificação
 
-https://ntfy.sh/lemonagents
+https://ntfy.accept.inf.br/lemonagents
+
+Servidor self-hosted (ver `docs/hostinger.md#ntfy` no repo infra_deploy), auth obrigatória via token:
+
+```
+Authorization: Bearer <NTFY_TOKEN>
+```
+
+`NTFY_TOKEN` fica em variável de ambiente/secret do agente, NUNCA hardcoded neste arquivo.
 
 ---
 
@@ -94,32 +102,35 @@ A mensagem DEVE conter:
 ## Exemplos
 
 ### Sucesso
-curl -H "Title: [OK] build-falcon" \
+curl -H "Authorization: Bearer $NTFY_TOKEN" \
+     -H "Title: [OK] build-falcon" \
      -H "Priority: high" \
      -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/gohan.png" \
      -H "User: GOHAN" \
      -d "Tarefa: build-falcon. Build concluído com sucesso." \
-     https://ntfy.sh/lemonagents
+     https://ntfy.accept.inf.br/lemonagents
 
 ---
 
 ### Erro
-curl -H "Title: [ERRO] deploy-api" \
+curl -H "Authorization: Bearer $NTFY_TOKEN" \
+     -H "Title: [ERRO] deploy-api" \
      -H "Priority: high" \
      -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/gohan.png" \
      -H "User: GOHAN" \
      -d "Tarefa: deploy-api. Falha durante migration do banco." \
-     https://ntfy.sh/lemonagents
+     https://ntfy.accept.inf.br/lemonagents
 
 ---
 
 ### Aguardando usuário
-curl -H "Title: [AGUARDANDO] parser-xls" \
+curl -H "Authorization: Bearer $NTFY_TOKEN" \
+     -H "Title: [AGUARDANDO] parser-xls" \
      -H "Priority: urgent" \
      -H "Icon: http://accept.dyn.accept.inf.br:8080/Accept/Dyn/gohan.png" \
      -H "User: GOHAN" \
      -d "Tarefa: parser-xls. Preciso da sua decisão sobre linhas inválidas." \
-     https://ntfy.sh/lemonagents
+     https://ntfy.accept.inf.br/lemonagents
 
 ---
 

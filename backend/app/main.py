@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from app.core.database import engine, Base, SessionLocal, User, Host, HostDistro
 from app.core.config import settings
 from app.core.security import hash_password
-from app.api import auth, users, hosts, reports, settings as settings_api, discovery, activity
+from app.api import auth, users, hosts, reports, settings as settings_api, discovery, activity, vulnerabilities
 
 # ---- Background Tasks ----
 
@@ -153,7 +153,7 @@ def _get_collect_settings():
 def _run_auto_collect():
     """Executa coleta automática em todos os hosts ativos."""
     from datetime import datetime
-    from app.core.database import HostHardware, HostDisk, HostNetwork, HostLicense, HostSoftware, HostRemoteAccess, ScanHistory
+    from app.core.database import HostHardware, HostDisk, HostNetwork, HostLicense, HostSoftware, HostRemoteAccess, ScanHistory, HostPatch, HostPendingUpdate, HostPatchStatus
     from app.api.activity import log_activity
     from app.collector.winrm_collect import collect_host, _make_fqdn, _connect, _run_ps, _safe_json
     from app.collector.winrm_collect import (
@@ -298,6 +298,37 @@ def _run_auto_collect():
                     db.add(HostSoftware(host_id=host_id_val, name=sw.get("name"), version=sw.get("version"),
                                         publisher=sw.get("publisher"), install_date=sw.get("install_date"),
                                         install_location=sw.get("install_location"), updated_at=now))
+                db.commit()
+                total_success += 1
+            except Exception:
+                total_fail += 1
+
+            # PATCHES (KBs + updates pendentes)
+            try:
+                from app.collector.winrm_collect import scan_host_patches
+                patches = scan_host_patches(host.hostname, cfg)
+                hotfixes = patches.get("hotfixes", [])
+                pending = patches.get("pending", [])
+                st = patches.get("status", {})
+                critical = sum(1 for p in pending if (p.get("severity") or "").lower() == "critical")
+                db.query(HostPatch).filter(HostPatch.host_id == host_id_val).delete()
+                for p in hotfixes:
+                    db.add(HostPatch(host_id=host_id_val, kb=p.get("kb"), description=p.get("description"), installed_on=p.get("installed_on"), updated_at=now))
+                db.query(HostPendingUpdate).filter(HostPendingUpdate.host_id == host_id_val).delete()
+                for p in pending:
+                    db.add(HostPendingUpdate(host_id=host_id_val, kb=p.get("kb"), title=p.get("title"), severity=p.get("severity"), reboot_required=bool(p.get("reboot")), updated_at=now))
+                existing_ps = db.query(HostPatchStatus).filter(HostPatchStatus.host_id == host_id_val).first()
+                ps_values = {
+                    "os_edition": st.get("os_edition"), "display_version": st.get("display_version"),
+                    "build": st.get("build"), "wu_last_success": st.get("wu_last_success"),
+                    "pending_count": len(pending), "critical_pending": critical,
+                    "last_error": st.get("last_error"), "last_scan": now, "updated_at": now,
+                }
+                if existing_ps:
+                    for k, v in ps_values.items():
+                        setattr(existing_ps, k, v)
+                else:
+                    db.add(HostPatchStatus(host_id=host_id_val, **ps_values))
                 db.commit()
                 total_success += 1
             except Exception:
@@ -986,6 +1017,7 @@ app.include_router(reports.router)
 app.include_router(settings_api.router)
 app.include_router(discovery.router)
 app.include_router(activity.router)
+app.include_router(vulnerabilities.router)
 
 
 # Health check

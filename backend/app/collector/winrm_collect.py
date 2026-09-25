@@ -336,6 +336,123 @@ $r | ConvertTo-Json -Compress
 """
 
 
+def _ps_hotfixes():
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+Get-HotFix | ForEach-Object {
+    @{
+        kb           = $_.HotFixID
+        description  = $_.Description
+        installed_on = if ($_.InstalledOn) { $_.InstalledOn.ToString("yyyy-MM-dd") } else { $null }
+    }
+} | ConvertTo-Json -Compress
+"""
+
+
+def _ps_pending_updates():
+    return r"""
+$ErrorActionPreference = "Stop"
+$out = @{}
+$pending = @()
+try {
+    try {
+        $lt = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results\\Install' -EA Stop).LastSuccessTime
+        $out.wu_last_success = "$lt"
+    } catch { $out.wu_last_success = $null }
+
+    $session = New-Object -ComObject Microsoft.Update.Session
+    $searcher = $session.CreateUpdateSearcher()
+    $result = $searcher.Search("IsInstalled=0 and IsHidden=0")
+    foreach ($u in $result.Updates) {
+        $kb = ""
+        try { if ($u.KBArticleIDs.Count -gt 0) { $kb = "KB" + $u.KBArticleIDs[0] } } catch {}
+        $pending += @{
+            title    = $u.Title
+            kb       = $kb
+            severity = if ($u.MsrcSeverity) { "$($u.MsrcSeverity)" } else { "None" }
+            reboot   = [bool]($u.InstallationBehavior.RebootBehavior -gt 1)
+        }
+    }
+    $out.pending = $pending
+    $out.ok = $true
+} catch {
+    $out.ok = $false
+    $out.error = $_.Exception.Message
+    $out.pending = @()
+}
+$out | ConvertTo-Json -Depth 4 -Compress
+"""
+
+
+def scan_host_patches(hostname, cfg, on_step=None):
+    """Escaneia patches de um host: KBs instalados + updates pendentes + status do SO.
+
+    on_step: callback (message: str) para progresso opcional.
+    Retorna dict {hotfixes, pending, status} ou levanta exceção na conexão.
+    """
+    target = _make_fqdn(hostname, cfg.get("search", ""))
+    session = _connect(target, cfg, operation_timeout_sec=20, read_timeout_sec=30)
+
+    def _notify(msg):
+        if on_step:
+            try:
+                on_step(msg)
+            except Exception:
+                pass
+
+    result = {"hotfixes": [], "pending": [], "status": {}}
+
+    # 1. Hotfixes (rápido)
+    _notify("Verificando KBs instalados...")
+    try:
+        raw = _run_ps_with_timeout(session, _ps_hotfixes(), label="hotfixes", timeout_sec=30)
+        parsed = _safe_json(raw, "hotfixes")
+        result["hotfixes"] = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+        _notify(f"✓ {len(result['hotfixes'])} KB(s) instalados")
+    except Exception as e:
+        result["status"]["hotfixes_error"] = str(e)[:200]
+        _notify(f"⚠ KBs instalados: {str(e)[:80]}")
+
+    # 2. Info do SO (rápido)
+    try:
+        raw = _run_ps_with_timeout(session, r"""
+$ErrorActionPreference = "SilentlyContinue"
+$cv = Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'
+@{
+    os_edition      = (Get-CimInstance Win32_OperatingSystem).Caption
+    display_version = $cv.DisplayVersion
+    build           = "$($cv.CurrentBuildNumber).$($cv.UBR)"
+} | ConvertTo-Json -Compress
+""", label="os-info", timeout_sec=30)
+        info = _safe_json(raw, "os-info")
+        if info:
+            result["status"].update({
+                "os_edition": info.get("os_edition"),
+                "display_version": info.get("display_version"),
+                "build": info.get("build"),
+            })
+    except Exception as e:
+        result["status"]["os_info_error"] = str(e)[:200]
+
+    # 3. Updates pendentes (lento — até 5 min)
+    _notify("Buscando updates pendentes (pode demorar 1-3 min)...")
+    try:
+        raw = _run_ps_with_timeout(session, _ps_pending_updates(), label="pending-updates", timeout_sec=330)
+        parsed = _safe_json(raw, "pending-updates") or {}
+        if parsed.get("ok"):
+            result["pending"] = parsed.get("pending", []) or []
+            result["status"]["wu_last_success"] = parsed.get("wu_last_success")
+            _notify(f"✓ {len(result['pending'])} update(s) pendente(s)")
+        else:
+            result["status"]["last_error"] = (parsed.get("error") or "Windows Update search falhou")[:500]
+            _notify(f"⚠ Busca WU falhou: {str(parsed.get('error'))[:80]}")
+    except Exception as e:
+        result["status"]["last_error"] = str(e)[:500]
+        _notify(f"✗ Updates pendentes: {str(e)[:80]}")
+
+    return result
+
+
 def collect_host(hostname, cfg):
     """Coleta todos os dados de um host via WinRM. Retorna dict com resultados."""
     target = _make_fqdn(hostname, cfg.get("search", ""))
@@ -379,6 +496,18 @@ def collect_host(hostname, cfg):
         errors.append(f"rede: {e}")
         data["network"] = []
         debug.append(f"✗ Rede falhou: {str(e)[:80]}")
+
+    # Patches (KBs instalados + pendentes)
+    debug.append("🩹 Coletando patches...")
+    try:
+        patches = scan_host_patches(hostname, cfg, on_step=lambda m: debug.append(f"  {m}"))
+        data["patches"] = patches["hotfixes"]
+        data["pending_updates"] = patches["pending"]
+        data["patch_status"] = patches["status"]
+    except Exception as e:
+        errors.append(f"patches: {e}")
+        data["patches"] = None
+        debug.append(f"✗ Patches falhou: {str(e)[:80]}")
 
     # Licenças
     debug.append("🔑 Coletando licenças...")

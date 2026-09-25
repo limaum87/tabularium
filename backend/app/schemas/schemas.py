@@ -138,3 +138,19 @@ class CheckinPayload(BaseModel):
     licenses: Optional[list[LicensePayload]] = None
     software: Optional[list[SoftwarePayload]] = None
     distro: Optional[dict] = None
+    patches: Optional[list["PatchPayload"]] = None
+    pending_updates: Optional[list["PendingUpdatePayload"]] = None
+    patch_status: Optional[dict] = None
+
+
+class PatchPayload(BaseModel):
+    kb: Optional[str] = None
+    description: Optional[str] = None
+    installed_on: Optional[str] = None
+
+
+class PendingUpdatePayload(BaseModel):
+    kb: Optional[str] = None
+    title: Optional[str] = None
+    severity: Optional[str] = None
+    reboot: Optional[bool] = False

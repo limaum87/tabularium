@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Patch Compliance</title>
+    <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .score-bar {
+            height: 6px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 3px;
+            overflow: hidden;
+            min-width: 90px;
+        }
+        .score-bar > div { height: 100%; border-radius: 3px; transition: width 0.5s; }
+        .stat-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            padding: 18px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .stat-card .stat-value { font-size: 30px; font-weight: 700; font-family: var(--font-mono); }
+        .stat-card .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
+        .scan-btn {
+            background: none;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            font-size: 12px;
+            font-family: var(--font-body);
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+        }
+        .scan-btn:hover { background: var(--accent-dim); }
+        .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('patches');
+
+        const mainContent = document.querySelector('.main-content');
+
+        async function loadOverview() {
+            mainContent.innerHTML = `<div style="padding:60px;text-align:center;color:var(--text-muted);font-family:var(--font-mono);">Carregando...</div>`;
+            const res = await apiFetch('/api/vulnerabilities/overview');
+            if (!res || !res.ok) {
+                mainContent.innerHTML = `<div style="padding:60px;text-align:center;color:var(--danger);">Erro ao carregar dados</div>`;
+                return;
+            }
+            const data = await res.json();
+            const s = data.summary;
+
+            const cards = [
+                { label: 'Score Médio', value: s.avg_score ?? '—', color: s.avg_score >= 90 ? 'var(--success)' : s.avg_score >= 60 ? 'var(--warning)' : 'var(--danger)' },
+                { label: 'Em Conformidade', value: s.compliant, color: 'var(--success)' },
+                { label: 'Desatualizados', value: s.outdated, color: 'var(--warning)' },
+                { label: 'Updates Pendentes', value: s.total_pending, color: 'var(--warning)' },
+                { label: 'Críticos Pendentes', value: s.total_critical, color: 'var(--danger)' },
+                { label: 'Reboot Pendente', value: s.reboot_required, color: 'var(--accent)' },
+                { label: 'Nunca Escaneados', value: s.never_scanned, color: 'var(--text-muted)' },
+            ];
+
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div>
+                    <h1>🩹 Patch Compliance</h1>
+                    <p class="page-subtitle">Status de atualização dos hosts Windows — ${s.scanned}/${s.total_hosts} escaneados · Total de KBs instalados no parque</p>
+                </div>
+            </div>
+            <div class="page-body">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px;">
+                    ${cards.map(c => `
+                        <div class="stat-card">
+                            <span class="stat-value" style="color:${c.color};">${c.value}</span>
+                            <span class="stat-label">${c.label}</span>
+                        </div>`).join('')}
+                </div>
+
+                <div class="panel animate-in">
+                    <div class="panel-header">
+                        <span class="panel-title">Hosts por Score de Patch</span>
+                        <span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">Verde ≥90 · Amarelo ≥60 · Vermelho &lt;60</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead><tr>
+                                <th>Hostname</th><th>SO</th><th>Versão / Build</th><th>Score</th>
+                                <th>Pendentes</th><th>Críticos</th><th>Reboot</th><th>Último Scan</th><th></th>
+                            </tr></thead>
+                            <tbody>
+                                ${data.hosts.length > 0 ? data.hosts.map(h => {
+                                    const scoreColor = h.score === null ? 'var(--text-muted)' : h.score >= 90 ? 'var(--success)' : h.score >= 60 ? 'var(--warning)' : 'var(--danger)';
+                                    const pct = h.score === null ? 0 : h.score;
+                                    return `<tr>
+                                        <td class="mono"><a href="/host-detail.html?id=${h.host_id}" style="color:var(--accent);text-decoration:none;">${h.hostname}</a></td>
+                                        <td style="font-size:12px;">${h.os_edition ? h.os_edition.replace('Microsoft Windows ', '') : '—'}</td>
+                                        <td class="mono" style="font-size:12px;">${h.display_version || '—'} ${h.build || ''}</td>
+                                        <td>
+                                            <div style="display:flex;align-items:center;gap:10px;">
+                                                <div class="score-bar" style="flex:1;max-width:110px;">
+                                                    <div style="width:${pct}%;background:${scoreColor};"></div>
+                                                </div>
+                                                <span class="mono" style="font-size:12px;color:${scoreColor};min-width:34px;">${h.score ?? '—'}</span>
+                                            </div>
+                                        </td>
+                                        <td class="mono">${h.pending_count}</td>
+                                        <td class="mono" style="color:${h.critical_pending > 0 ? 'var(--danger)' : 'inherit'};">${h.critical_pending || '—'}</td>
+                                        <td>${h.reboot_required ? '<span class="badge-status badge-warning">Sim</span>' : '—'}</td>
+                                        <td class="mono" style="font-size:11px;">${h.last_scan ? new Date(h.last_scan).toLocaleString('pt-BR') : 'Nunca'}</td>
+                                        <td><button class="scan-btn" onclick="scanHost(${h.host_id}, '${h.hostname}', this)">🩹 Scan</button></td>
+                                    </tr>`;
+                                }).join('') : '<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum host ativo</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+
+            window._overviewData = data;
+        }
+
+        async function scanHost(hostId, hostname, btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ ...';
+            try {
+                const res = await fetch(`/api/hosts/${hostId}/action/scan-updates-stream`, {
+                    headers: { ...authHeaders() },
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    alert(err.detail || `Erro HTTP ${res.status}`);
+                    btn.disabled = false;
+                    btn.textContent = '🩹 Scan';
+                    return;
+                }
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let lastMsg = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const d = JSON.parse(line.slice(6));
+                                if (d.message) lastMsg = d.message;
+                                btn.textContent = d.message ? d.message.slice(0, 24) : '⏳ ...';
+                            } catch (e) {}
+                        }
+                    }
+                }
+            } catch (err) {
+                alert('Erro: ' + err.message);
+            }
+            loadOverview();
+        }
+
+        loadOverview();
+    </script>
+</body>
+</html>

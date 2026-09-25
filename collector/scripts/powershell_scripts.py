@@ -141,6 +141,60 @@ try {
 """
 
 
+def ps_hotfixes():
+    """Lista KBs instalados (rápido, via WMI)."""
+    return r"""
+$ErrorActionPreference = "SilentlyContinue"
+Get-HotFix | ForEach-Object {
+    @{
+        kb           = $_.HotFixID
+        description  = $_.Description
+        installed_on = if ($_.InstalledOn) { $_.InstalledOn.ToString("yyyy-MM-dd") } else { $null }
+    }
+} | ConvertTo-Json -Compress
+"""
+
+
+def ps_pending_updates():
+    """Busca updates pendentes via COM Microsoft.Update.Session.
+
+    ATENÇÃO: pode demorar 1-3 min (contata WU/WSUS). Chamar com timeout alto.
+    """
+    return r"""
+$ErrorActionPreference = "Stop"
+$out = @{}
+$pending = @()
+try {
+    # Última instalação com sucesso (registry)
+    try {
+        $lt = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\Results\Install' -EA Stop).LastSuccessTime
+        $out.wu_last_success = "$lt"
+    } catch { $out.wu_last_success = $null }
+
+    $session = New-Object -ComObject Microsoft.Update.Session
+    $searcher = $session.CreateUpdateSearcher()
+    $result = $searcher.Search("IsInstalled=0 and IsHidden=0")
+    foreach ($u in $result.Updates) {
+        $kb = ""
+        try { if ($u.KBArticleIDs.Count -gt 0) { $kb = "KB" + $u.KBArticleIDs[0] } } catch {}
+        $pending += @{
+            title    = $u.Title
+            kb       = $kb
+            severity = if ($u.MsrcSeverity) { "$($u.MsrcSeverity)" } else { "None" }
+            reboot   = [bool]($u.InstallationBehavior.RebootBehavior -gt 1)
+        }
+    }
+    $out.pending = $pending
+    $out.ok = $true
+} catch {
+    $out.ok = $false
+    $out.error = $_.Exception.Message
+    $out.pending = @()
+}
+$out | ConvertTo-Json -Depth 4 -Compress
+"""
+
+
 def ps_software():
     """Coleta softwares instalados (via Registry — mais completo que WMI)."""
     return r"""

@@ -152,6 +152,7 @@
                     <button class="action-btn-detail" onclick="runDetailAction('test-winrm')" id="btn-test-winrm">🔌 Testar WinRM</button>
                     <button class="action-btn-detail" onclick="runDetailAction('enable-winrm')" id="btn-enable-winrm">⚡ Ativar WinRM</button>
                     <button class="action-btn-detail" onclick="runDetailAction('collect')" id="btn-collect" style="border-color:var(--accent);color:var(--accent);">🔄 Coletar Dados</button>
+                    <button class="action-btn-detail" onclick="runScanUpdatesStream()" id="btn-scan-updates">🩹 Verificar Updates</button>
                     ${!h.is_legacy ? `<button class="action-btn-detail" onclick="moveToLegacy()" id="btn-legacy" style="border-color:var(--danger);color:var(--danger);">⊘ Mover para Legados</button>` : `<span class="badge-status badge-warning" style="font-size:13px;padding:8px 14px;">⊘ Host Legado</span>`}
                 </div>
                 <div id="action-result" style="display:none;"></div>
@@ -192,6 +193,57 @@
                     </div>
                 </div>
                 ` : ''}
+
+                ${(() => {
+                    const pst = data.patch_status;
+                    const pu = data.pending_updates || [];
+                    if (!pst && pu.length === 0 && !(data.patches || []).length) return '';
+                    const score = pu.length === 0 ? 100 : Math.max(0, 100 - (pst?.critical_pending || 0) * 25 - (pu.length - (pst?.critical_pending || 0)) * 10);
+                    const scoreColor = score >= 90 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--danger)';
+                    const sevBadge = s => s === 'Critical' ? 'badge-danger' : s === 'Important' ? 'badge-warning' : 'badge-muted';
+                    return `
+                <!-- Patches & Atualizações -->
+                <div class="panel animate-in" style="margin-bottom:20px;border-left:3px solid ${scoreColor};">
+                    <div class="panel-header">
+                        <span class="panel-title">🩹 Patches & Atualizações</span>
+                        <span style="font-size:12px;color:${scoreColor};font-family:var(--font-mono);">Score: ${score}/100</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table" style="margin-bottom:16px;">
+                            <tbody>
+                                <tr><td style="width:200px;color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Edição do SO</td><td class="mono">${pst?.os_edition || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Versão / Build</td><td class="mono">${pst?.display_version || '—'} ${pst?.build ? `(${pst.build})` : ''}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Último WU OK</td><td class="mono">${pst?.wu_last_success || '—'}</td></tr>
+                                <tr><td style="color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Último Scan</td><td class="mono">${pst?.last_scan ? new Date(pst.last_scan).toLocaleString('pt-BR') : '—'}</td></tr>
+                            </tbody>
+                        </table>
+                        <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:8px;">Updates Pendentes (${pu.length})</div>
+                        <table class="data-table" style="margin-bottom:16px;">
+                            <thead><tr><th>KB</th><th>Título</th><th>Severidade</th><th>Reboot</th></tr></thead>
+                            <tbody>
+                                ${pu.length > 0 ? pu.map(p => `<tr>
+                                    <td class="mono">${p.kb || '—'}</td>
+                                    <td style="font-size:12px;">${p.title || '—'}</td>
+                                    <td><span class="badge-status ${sevBadge(p.severity)}">${p.severity || 'None'}</span></td>
+                                    <td>${p.reboot_required ? '<span class="badge-status badge-warning">Sim</span>' : '—'}</td>
+                                </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;padding:14px;color:var(--success);">✓ Nenhum update pendente</td></tr>'}
+                            </tbody>
+                        </table>
+                        <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:8px;">Últimos KBs Instalados</div>
+                        <table class="data-table">
+                            <thead><tr><th>KB</th><th>Tipo</th><th>Instalado em</th></tr></thead>
+                            <tbody>
+                                ${(data.patches || []).slice(0, 15).map(k => `<tr>
+                                    <td class="mono">${k.kb || '—'}</td>
+                                    <td>${k.description || '—'}</td>
+                                    <td class="mono">${k.installed_on || '—'}</td>
+                                </tr>`).join('') || '<tr><td colspan="3" style="text-align:center;padding:14px;color:var(--text-muted)">Sem dados — execute "Verificar Updates"</td></tr>'}
+                            </tbody>
+                        </table>
+                        ${pst?.last_error ? `<div style="margin-top:10px;font-size:11px;color:var(--danger);font-family:var(--font-mono);">⚠ ${pst.last_error}</div>` : ''}
+                    </div>
+                </div>`;
+                })()}
 
                 <!-- Discos -->
                 <div class="panel animate-in animate-in-delay-1" style="margin-bottom:20px;">
@@ -330,6 +382,77 @@
         }
 
         loadHost();
+
+        async function runScanUpdatesStream() {
+            const actionBtn = document.getElementById('btn-scan-updates');
+            const resultEl = document.getElementById('action-result');
+            actionBtn.disabled = true;
+            actionBtn.innerHTML = '<span class="spinner"></span>Verificando Updates';
+            resultEl.style.display = 'block';
+            resultEl.innerHTML = `
+                <div class="collect-console">
+                    <div class="console-header">
+                        <div class="console-dot" style="background:#f85149;"></div>
+                        <div class="console-dot" style="background:#d29922;"></div>
+                        <div class="console-dot" style="background:#3fb950;"></div>
+                        <span>Tabularium — Scan de Updates</span>
+                    </div>
+                    <div class="console-body" id="scan-console-output"></div>
+                </div>`;
+
+            const output = document.getElementById('scan-console-output');
+
+            function ts() {
+                const d = new Date();
+                return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+            }
+
+            function addLine(cls, msg) {
+                const line = document.createElement('div');
+                line.className = `console-line ${cls}`;
+                line.innerHTML = `<span class="timestamp">[${ts()}]</span>${msg}`;
+                output.appendChild(line);
+                output.scrollTop = output.scrollHeight;
+            }
+
+            try {
+                const res = await fetch(`/api/hosts/${hostId}/action/scan-updates-stream`, {
+                    headers: { ...authHeaders() },
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    addLine('error', `✗ ${err.detail || 'Erro HTTP ' + res.status}`);
+                    return;
+                }
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === 'start') addLine('step', `Iniciando scan: ${data.hostname}`);
+                                else if (data.type === 'done') {
+                                    addLine('done', data.message);
+                                    setTimeout(() => { loadHost(); resultEl.style.display = 'none'; }, 3000);
+                                }
+                                else addLine(data.type === 'step' ? 'step' : data.type === 'step_ok' ? 'ok' : 'warn', data.message);
+                            } catch (e) {}
+                        }
+                    }
+                }
+            } catch (err) {
+                addLine('error', `✗ Erro: ${err.message}`);
+            }
+            actionBtn.disabled = false;
+            actionBtn.textContent = '🩹 Verificar Updates';
+        }
 
         async function moveToLegacy() {
             if (!confirm('Deseja realmente mover este host para legados? Ele deixará de aparecer na listagem principal de hosts.')) return;

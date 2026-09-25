@@ -8,6 +8,7 @@ from collector.logger import get_logger
 from collector.scripts.powershell_scripts import (
     ps_hardware, ps_disks, ps_network,
     ps_windows_license, ps_office_license, ps_software,
+    ps_hotfixes, ps_pending_updates,
 )
 
 log = get_logger()
@@ -114,5 +115,30 @@ class WinRMCollector:
             log.warning(f"  ⚠ software: {e}")
             data["software"] = []
 
-        log.info(f"  ✓ {hostname}: hw={bool(data['hardware'])} discos={len(data['disks'])} rede={len(data['network'])} lic={len(data['licenses'])} sw={len(data['software'])}")
+        # Patches (KBs + updates pendentes)
+        try:
+            hf_session = self._connect(hostname, operation_timeout_sec=30, read_timeout_sec=40)
+            raw = self._run_script(hf_session, ps_hotfixes())
+            parsed = self._safe_json(raw, "hotfixes")
+            data["patches"] = parsed if isinstance(parsed, list) else [parsed] if parsed else []
+        except Exception as e:
+            log.warning(f"  ⚠ hotfixes: {e}")
+            data["patches"] = None
+
+        try:
+            wu_session = self._connect(hostname, operation_timeout_sec=60, read_timeout_sec=360)
+            raw = self._run_script(wu_session, ps_pending_updates())
+            parsed = self._safe_json(raw, "pending-updates") or {}
+            if parsed.get("ok"):
+                data["pending_updates"] = parsed.get("pending", [])
+                data["patch_status"] = {"wu_last_success": parsed.get("wu_last_success")}
+            else:
+                data["pending_updates"] = []
+                data["patch_status"] = {"last_error": (parsed.get("error") or "")[:500]}
+        except Exception as e:
+            log.warning(f"  ⚠ pending updates: {e}")
+            data["pending_updates"] = []
+            data["patch_status"] = {"last_error": str(e)[:500]}
+
+        log.info(f"  ✓ {hostname}: hw={bool(data['hardware'])} discos={len(data['disks'])} rede={len(data['network'])} lic={len(data['licenses'])} sw={len(data['software'])} patches={len(data.get('patches') or [])} pendentes={len(data.get('pending_updates') or [])}")
         return data
