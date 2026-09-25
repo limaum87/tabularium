@@ -335,6 +335,7 @@
                                 <tr>
                                     <th>Hostname</th>
                                     <th>SO</th>
+                                    <th>Risco 🛡</th>
                                     <th>Ping</th>
                                     <th>Status</th>
                                     <th>Última Coleta</th>
@@ -353,12 +354,22 @@
             if (!res) return;
             const hosts = await res.json();
 
+            // Risco por host (best effort — se falhar, segue sem badges)
+            let riskByHost = {};
+            try {
+                const vres = await apiFetch('/api/vulnerabilities/overview');
+                if (vres && vres.ok) {
+                    const vdata = await vres.json();
+                    vdata.hosts.forEach(h => { riskByHost[h.host_id] = h.risk_score; });
+                }
+            } catch (e) {}
+
             const tbody = document.querySelector('#hosts-table tbody');
 
             function renderHosts(list) {
                 tbody.innerHTML = '';
                 if (list.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text-muted)">Nenhum host encontrado</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted)">Nenhum host encontrado</td></tr>';
                     return;
                 }
                 list.forEach(h => {
@@ -367,9 +378,16 @@
                     const soIcon = h.so_type === 'linux' ? '🐧' : h.so_type === 'windows' ? '🪟' : '❓';
                     const soLabel = h.so_type === 'linux' ? 'Linux' : h.so_type === 'windows' ? 'Windows' : '?';
                     const dt = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
+                    const risk = riskByHost[h.id];
+                    const riskBadge = risk === undefined || risk === null ? '<span class="badge-status badge-muted" title="Nunca escaneado">—</span>'
+                        : risk >= 7 ? `<span class="badge-status badge-danger" title="Risk score ${risk}">🛡 ALTO</span>`
+                        : risk >= 4 ? `<span class="badge-status badge-warning" title="Risk score ${risk}">🛡 MÉDIO</span>`
+                        : risk > 0 ? `<span class="badge-status badge-success" title="Risk score ${risk}">🛡 BAIXO</span>`
+                        : '<span class="badge-status badge-success" title="Sem CVEs expostas">🛡 OK</span>';
                     tbody.innerHTML += `<tr id="row-${h.id}">
                         <td class="mono">${h.hostname}</td>
                         <td><span style="font-size:11px;" title="${soLabel}">${soIcon}</span></td>
+                        <td>${riskBadge}</td>
                         <td><span class="badge-status ${pingBadge}">📡 ${h.ping_status || '?'}</span></td>
                         <td><span class="badge-status ${statusBadge}" title="${soLabel}">🔌 ${h.status}</span></td>
                         <td>${dt}</td>

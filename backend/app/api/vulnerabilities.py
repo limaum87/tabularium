@@ -16,11 +16,22 @@ router = APIRouter(prefix="/api/vulnerabilities", tags=["vulnerabilities"])
 
 @router.get("/overview")
 def patch_overview(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    """Visão geral de compliance de patches por host (estilo Tenable)."""
+    """Visão geral de compliance de patches + risco por host (estilo Tenable)."""
     hosts = db.query(Host).filter(Host.is_legacy == False).all()
     statuses = {s.host_id: s for s in db.query(HostPatchStatus).all()}
     pending_rows = db.query(HostPendingUpdate).all()
     total_kbs = db.query(HostPatch).count()
+
+    # CVEs por KB (para exposição a vulnerabilidades)
+    kb_cves_rows = (
+        db.query(KbCve.kb, Cve.cve_id, Cve.cvss_score, Cve.severity)
+        .outerjoin(Cve, KbCve.cve_id == Cve.cve_id)
+        .all()
+    )
+    kb_vulns = {}  # kb -> [(cve_id, cvss)]
+    for kb, cve_id, cvss, _sev in kb_cves_rows:
+        if cve_id:
+            kb_vulns.setdefault(kb.upper(), []).append((cve_id, cvss or 0))
 
     pending_by_host = {}
     critical_by_host = {}
@@ -37,6 +48,19 @@ def patch_overview(db: Session = Depends(get_db), _=Depends(get_current_user)):
         st = statuses.get(h.id)
         pending = pending_by_host.get(h.id, 0)
         critical = critical_by_host.get(h.id, 0)
+
+        # Exposição a CVEs: KBs pendentes × mapeamento MSRC
+        cve_ids = set()
+        cve_scores = []
+        for p in pending_rows:
+            if p.host_id == h.id and p.kb:
+                for cve_id, cvss in kb_vulns.get(p.kb.upper(), []):
+                    cve_ids.add(cve_id)
+                    cve_scores.append(cvss)
+        cve_count = len(cve_ids)
+        max_cvss = max(cve_scores) if cve_scores else None
+        # Risk score 0-10: soma dos CVSS das CVEs expostas, saturado em 10
+        risk_score = round(min(10, sum(cve_scores) / 25), 1) if cve_scores else 0
 
         # Score de compliance: 100 sem pendentes, -25 por critical (mín 0),
         # -10 por outro pending, nunca escaneado = None
@@ -61,10 +85,13 @@ def patch_overview(db: Session = Depends(get_db), _=Depends(get_current_user)):
             "last_scan": st.last_scan.isoformat() if st and st.last_scan else None,
             "last_error": st.last_error if st else None,
             "score": score,
+            "cve_count": cve_count,
+            "max_cvss": max_cvss,
+            "risk_score": risk_score if st is not None else None,
         })
 
-    # Ordena: piores primeiro (sem scan no fim)
-    hosts_out.sort(key=lambda x: (x["score"] is None, x["score"] if x["score"] is not None else 0))
+    # Ordena: maior risco primeiro (sem scan no fim)
+    hosts_out.sort(key=lambda x: (x["risk_score"] is None, -(x["risk_score"] or 0)))
 
     scanned = sum(1 for h in hosts_out if h["last_scan"])
     return {
@@ -80,9 +107,48 @@ def patch_overview(db: Session = Depends(get_db), _=Depends(get_current_user)):
             "avg_score": round(
                 sum(h["score"] for h in hosts_out if h["score"] is not None)
                 / max(1, sum(1 for h in hosts_out if h["score"] is not None)), 1),
+            "high_risk_hosts": sum(1 for h in hosts_out if (h["risk_score"] or 0) >= 7),
+            "total_exposed_cves": sum(h["cve_count"] for h in hosts_out),
         },
         "hosts": hosts_out,
     }
+
+
+@router.get("/report.csv")
+def report_csv(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Relatório CSV de compliance + risco (para auditoria)."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    overview = patch_overview(db=db, _=_)
+
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow([
+        "hostname", "so", "versao", "build", "score_patch", "pendentes",
+        "criticos", "cves_expostas", "cvss_max", "risk_score", "reboot",
+        "ultimo_wu_ok", "ultimo_scan",
+    ])
+    for h in overview["hosts"]:
+        w.writerow([
+            h["hostname"], h["os_edition"] or "", h["display_version"] or "",
+            h["build"] or "", h["score"] if h["score"] is not None else "",
+            h["pending_count"], h["critical_pending"], h["cve_count"],
+            h["max_cvss"] if h["max_cvss"] is not None else "",
+            h["risk_score"] if h["risk_score"] is not None else "",
+            "sim" if h["reboot_required"] else "",
+            h["wu_last_success"] or "", h["last_scan"] or "",
+        ])
+
+    buf.seek(0)
+    from datetime import datetime as _dt
+    filename = f"tabularium-patch-report-{_dt.utcnow().strftime('%Y%m%d-%H%M')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.get("/hosts/{host_id}")

@@ -68,15 +68,19 @@
                 { label: 'Desatualizados', value: s.outdated, color: 'var(--warning)' },
                 { label: 'Updates Pendentes', value: s.total_pending, color: 'var(--warning)' },
                 { label: 'Críticos Pendentes', value: s.total_critical, color: 'var(--danger)' },
+                { label: 'Hosts Alto Risco', value: s.high_risk_hosts, color: 'var(--danger)' },
+                { label: 'CVEs Expostas', value: s.total_exposed_cves, color: 'var(--danger)' },
                 { label: 'Reboot Pendente', value: s.reboot_required, color: 'var(--accent)' },
-                { label: 'Nunca Escaneados', value: s.never_scanned, color: 'var(--text-muted)' },
             ];
 
             mainContent.innerHTML = `
             <div class="page-header">
-                <div>
-                    <h1>🩹 Patch Compliance</h1>
-                    <p class="page-subtitle">Status de atualização dos hosts Windows — ${s.scanned}/${s.total_hosts} escaneados · Total de KBs instalados no parque</p>
+                <div style="display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                        <h1>🩹 Patch Compliance</h1>
+                        <p class="page-subtitle">Status de atualização dos hosts Windows — ${s.scanned}/${s.total_hosts} escaneados · Total de KBs instalados no parque</p>
+                    </div>
+                    <a class="scan-btn" href="/api/vulnerabilities/report.csv" style="text-decoration:none;">⬇ Exportar CSV</a>
                 </div>
             </div>
             <div class="page-body">
@@ -97,12 +101,14 @@
                         <table class="data-table">
                             <thead><tr>
                                 <th>Hostname</th><th>SO</th><th>Versão / Build</th><th>Score</th>
-                                <th>Pendentes</th><th>Críticos</th><th>Reboot</th><th>Último Scan</th><th></th>
+                                <th>Pendentes</th><th>Críticos</th><th>CVEs</th><th>Risco</th><th>Reboot</th><th>Último Scan</th><th></th>
                             </tr></thead>
                             <tbody>
                                 ${data.hosts.length > 0 ? data.hosts.map(h => {
                                     const scoreColor = h.score === null ? 'var(--text-muted)' : h.score >= 90 ? 'var(--success)' : h.score >= 60 ? 'var(--warning)' : 'var(--danger)';
                                     const pct = h.score === null ? 0 : h.score;
+                                    const riskColor = h.risk_score === null ? 'var(--text-muted)' : h.risk_score >= 7 ? 'var(--danger)' : h.risk_score >= 4 ? 'var(--warning)' : 'var(--success)';
+                                    const riskLabel = h.risk_score === null ? '—' : h.risk_score >= 7 ? 'ALTO' : h.risk_score >= 4 ? 'MÉDIO' : h.risk_score > 0 ? 'BAIXO' : 'OK';
                                     return `<tr>
                                         <td class="mono"><a href="/host-detail.html?id=${h.host_id}" style="color:var(--accent);text-decoration:none;">${h.hostname}</a></td>
                                         <td style="font-size:12px;">${h.os_edition ? h.os_edition.replace('Microsoft Windows ', '') : '—'}</td>
@@ -117,11 +123,13 @@
                                         </td>
                                         <td class="mono">${h.pending_count}</td>
                                         <td class="mono" style="color:${h.critical_pending > 0 ? 'var(--danger)' : 'inherit'};">${h.critical_pending || '—'}</td>
+                                        <td class="mono" style="color:${h.cve_count > 0 ? 'var(--danger)' : 'inherit'};">${h.cve_count || '—'}</td>
+                                        <td><span class="badge-status" style="color:${riskColor};border-color:${riskColor};">${riskLabel}${h.risk_score !== null ? ` ${h.risk_score}` : ''}</span></td>
                                         <td>${h.reboot_required ? '<span class="badge-status badge-warning">Sim</span>' : '—'}</td>
                                         <td class="mono" style="font-size:11px;">${h.last_scan ? new Date(h.last_scan).toLocaleString('pt-BR') : 'Nunca'}</td>
                                         <td><button class="scan-btn" onclick="scanHost(${h.host_id}, '${h.hostname}', this)">🩹 Scan</button></td>
                                     </tr>`;
-                                }).join('') : '<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum host ativo</td></tr>'}
+                                }).join('') : '<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum host ativo</td></tr>'}
                             </tbody>
                         </table>
                     </div>
