@@ -21,11 +21,14 @@ NET_DISCOVERY_INTERVAL = 86400  # 24 horas (1x por dia)
 NET_DISCOVERY_STARTUP_DELAY = 120  # espera 2 min antes do primeiro scan
 AD_DISCOVERY_INTERVAL = 259200  # 3 dias (1x a cada 3 dias)
 AD_DISCOVERY_STARTUP_DELAY = 180  # espera 3 min antes do primeiro scan
+VULN_SYNC_INTERVAL = 86400  # 24 horas (sync CVE MSRC 1x por dia)
+VULN_SYNC_STARTUP_DELAY = 300  # espera 5 min antes do primeiro sync
 
 _ping_task = None
 _collect_task = None
 _net_discovery_task = None
 _ad_discovery_task = None
+_vuln_sync_task = None
 _last_ping_log = None
 _last_collect_log = None
 _next_ping_at = None       # datetime da próxima execução de ping sweep
@@ -820,6 +823,29 @@ async def _collect_loop():
             await asyncio.sleep(300)  # tenta de novo em 5min
 
 
+async def _vuln_sync_loop():
+    """Background task: sync CVE↔KB (MSRC) 1x por dia."""
+    from app.services import nvd_sync
+
+    await asyncio.sleep(VULN_SYNC_STARTUP_DELAY)
+    while True:
+        try:
+            def _step(msg):
+                print(f"[vuln-sync] {msg}")
+
+            await asyncio.wait_for(
+                asyncio.to_thread(nvd_sync.sync_cves, 24, _step, 60),
+                timeout=3600  # 1h max
+            )
+        except asyncio.TimeoutError:
+            print("[vuln-sync] Timeout (1h) — sync abortado")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[vuln-sync] Erro: {e}")
+        await asyncio.sleep(VULN_SYNC_INTERVAL)
+
+
 # ---- Lifespan ----
 
 @asynccontextmanager
@@ -831,7 +857,7 @@ async def lifespan(app: FastAPI):
     _apply_dns_from_db()
 
     # Inicia background ping task
-    global _ping_task, _collect_task, _net_discovery_task, _ad_discovery_task
+    global _ping_task, _collect_task, _net_discovery_task, _ad_discovery_task, _vuln_sync_task
     _ping_task = asyncio.create_task(_ping_loop())
     print(f"[ping-sweep] Iniciado — intervalo: {PING_INTERVAL}s")
 
@@ -847,6 +873,10 @@ async def lifespan(app: FastAPI):
     _ad_discovery_task = asyncio.create_task(_ad_discovery_loop())
     print(f"[ad-discovery-auto] Iniciado — intervalo: {AD_DISCOVERY_INTERVAL}s (1x a cada 3 dias)")
 
+    # Inicia background vuln sync task
+    _vuln_sync_task = asyncio.create_task(_vuln_sync_loop())
+    print(f"[vuln-sync] Iniciado — intervalo: {VULN_SYNC_INTERVAL}s (1x por dia)")
+
     yield
 
     # Cancela tasks ao desligar
@@ -858,6 +888,8 @@ async def lifespan(app: FastAPI):
         _net_discovery_task.cancel()
     if _ad_discovery_task:
         _ad_discovery_task.cancel()
+    if _vuln_sync_task:
+        _vuln_sync_task.cancel()
 
 
 def _migrate_db():

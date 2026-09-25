@@ -1,10 +1,13 @@
-"""API de Vulnerabilidades & Patch Compliance (Fase 1 — patches)."""
+"""API de Vulnerabilidades & Patch Compliance (Fase 1 — patches, Fase 2 — CVEs)."""
+import threading
+
 from sqlalchemy.orm import Session
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.database import (
     get_db, Host, HostPatchStatus, HostPendingUpdate, HostPatch,
+    HostDistro, Cve, KbCve, Setting,
 )
 from app.core.security import get_current_user
 
@@ -109,4 +112,90 @@ def host_vulnerabilities(host_id: int, db: Session = Depends(get_db), _=Depends(
             {"kb": k.kb, "description": k.description, "installed_on": k.installed_on}
             for k in kbs
         ],
+    }
+
+
+# ---- Fase 2: CVEs (MSRC) ----
+
+@router.post("/sync-cves")
+def sync_cves_endpoint(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Dispara sincronização CVE↔KB (MSRC) em background thread."""
+    from app.services import nvd_sync
+    from app.core.database import SessionLocal
+
+    if nvd_sync.is_running():
+        return {"detail": "Sync já em andamento", "running": True}
+
+    def _run():
+        nvd_sync.sync_cves()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"detail": "Sincronização iniciada", "running": True}
+
+
+@router.get("/sync-status")
+def sync_status(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    from app.services import nvd_sync
+
+    last = db.query(Setting).filter(Setting.key == "last_sync", Setting.category == "vulns").first()
+    months = db.query(Setting).filter(Setting.key == "months_back", Setting.category == "vulns").first()
+    return {
+        "running": nvd_sync.is_running(),
+        "last_sync": last.value if last else None,
+        "months_back": int(months.value) if months and months.value and months.value.isdigit() else 24,
+        "total_cves": db.query(Cve).count(),
+        "total_mappings": db.query(KbCve).count(),
+    }
+
+
+@router.get("/cves")
+def list_cves(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Lista CVEs que afetam hosts com updates pendentes (estilo Tenable)."""
+    # KBs pendentes por host
+    pending = db.query(HostPendingUpdate.host_id, HostPendingUpdate.kb).all()
+    kb_hosts = {}  # kb -> [host_id]
+    for host_id, kb in pending:
+        if kb:
+            kb_hosts.setdefault(kb.upper(), []).append(host_id)
+
+    hosts = {h.id: h for h in db.query(Host).all()}
+    mappings = db.query(KbCve).all()
+    cves_db = {c.cve_id: c for c in db.query(Cve).all()}
+
+    # cve_id -> {hosts set, kbs set}
+    cve_hosts = {}
+    for m in mappings:
+        affected = kb_hosts.get(m.kb.upper(), [])
+        if not affected:
+            continue
+        entry = cve_hosts.setdefault(m.cve_id, {"hosts": set(), "kbs": set()})
+        entry["hosts"].update(affected)
+        entry["kbs"].add(m.kb)
+
+    out = []
+    for cve_id, info in cve_hosts.items():
+        c = cves_db.get(cve_id)
+        out.append({
+            "cve_id": cve_id,
+            "title": c.title if c else None,
+            "cvss_score": c.cvss_score if c else None,
+            "severity": c.severity if c else "None",
+            "published": c.published if c else None,
+            "kbs": sorted(info["kbs"]),
+            "affected_hosts": len(info["hosts"]),
+            "hostnames": sorted(hosts[h].hostname for h in info["hosts"] if h in hosts),
+        })
+
+    # Ordena por CVSS desc
+    out.sort(key=lambda x: (-(x["cvss_score"] or 0), x["cve_id"]))
+
+    return {
+        "summary": {
+            "total": len(out),
+            "critical": sum(1 for c in out if c["severity"] == "Critical"),
+            "high": sum(1 for c in out if c["severity"] == "High"),
+            "medium": sum(1 for c in out if c["severity"] == "Medium"),
+            "affected_hosts": len({h for c in out for h in c.get("hostnames", [])}),
+        },
+        "cves": out,
     }

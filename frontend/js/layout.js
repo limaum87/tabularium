@@ -32,6 +32,7 @@ function loadLayout(activePage) {
         { id: 'windows-versions', icon: '⊞', label: 'Versões Windows', href: '/windows-versions.html' },
         { section: 'Segurança' },
         { id: 'patches', icon: '🩹', label: 'Patch Compliance', href: '/patches.html' },
+        { id: 'vulnerabilities', icon: '🛡', label: 'Vulnerabilidades', href: '/vulnerabilities.html' },
     ];
 
     if (isAdmin) {

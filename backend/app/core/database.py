@@ -243,6 +243,29 @@ class HostPatchStatus(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class Cve(Base):
+    """CVE cacheado da base MSRC (CVRF)."""
+    __tablename__ = "cves"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cve_id = Column(String(20), unique=True, nullable=False, index=True)  # CVE-2024-21412
+    title = Column(String(500), nullable=True)
+    cvss_score = Column(Float, nullable=True)
+    severity = Column(String(20), nullable=True)  # Critical, High, Medium, Low, None
+    published = Column(String(30), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class KbCve(Base):
+    """Relação N:M entre KB e CVE (KB corrigido pelo CVE)."""
+    __tablename__ = "kb_cves"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kb = Column(String(20), nullable=False, index=True)
+    cve_id = Column(String(20), nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class HostDistro(Base):
     __tablename__ = "host_distro"
 

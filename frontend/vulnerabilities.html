@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Vulnerabilidades</title>
+    <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .stat-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            padding: 18px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .stat-card .stat-value { font-size: 30px; font-weight: 700; font-family: var(--font-mono); }
+        .stat-card .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); }
+        .sync-btn {
+            background: none;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            font-size: 12px;
+            font-family: var(--font-body);
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+        }
+        .sync-btn:hover:not(:disabled) { background: var(--accent-dim); }
+        .sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .cve-link { color: var(--accent); text-decoration: none; font-family: var(--font-mono); }
+        .cve-link:hover { text-decoration: underline; }
+        .host-chip {
+            display: inline-block;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-subtle);
+            border-radius: 10px;
+            padding: 2px 10px;
+            margin: 2px 4px 2px 0;
+        }
+        .sync-status {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+    </style>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('vulnerabilities');
+
+        const mainContent = document.querySelector('.main-content');
+
+        function sevBadge(sev) {
+            return sev === 'Critical' ? 'badge-danger' : sev === 'High' ? 'badge-warning'
+                 : sev === 'Medium' ? 'badge-success' : 'badge-muted';
+        }
+
+        async function loadCves() {
+            const statusRes = await apiFetch('/api/vulnerabilities/sync-status');
+            const status = statusRes && statusRes.ok ? await statusRes.json() : {};
+
+            const res = await apiFetch('/api/vulnerabilities/cves');
+            if (!res || !res.ok) {
+                mainContent.innerHTML = `<div style="padding:60px;text-align:center;color:var(--danger);">Erro ao carregar dados</div>`;
+                return;
+            }
+            const data = await res.json();
+            const s = data.summary;
+
+            const cards = [
+                { label: 'CVEs Ativos', value: s.total, color: 'var(--text-primary)' },
+                { label: 'Críticos', value: s.critical, color: 'var(--danger)' },
+                { label: 'Altos', value: s.high, color: 'var(--warning)' },
+                { label: 'Médios', value: s.medium, color: 'var(--accent)' },
+                { label: 'Hosts Afetados', value: s.affected_hosts, color: 'var(--text-primary)' },
+            ];
+
+            const lastSync = status.last_sync ? new Date(status.last_sync).toLocaleString('pt-BR') : 'Nunca';
+
+            mainContent.innerHTML = `
+            <div class="page-header">
+                <div>
+                    <h1>🛡️ Vulnerabilidades</h1>
+                    <p class="page-subtitle">CVEs ativas correlacionadas com updates pendentes dos hosts (fonte: MSRC)</p>
+                </div>
+                <div style="text-align:right;">
+                    <button class="sync-btn" id="btn-sync" onclick="startSync()">🔄 Sincronizar CVEs</button>
+                    <div class="sync-status" style="margin-top:6px;">Base MSRC: ${status.total_cves || 0} CVEs · ${status.total_mappings || 0} mappings · Último sync: ${lastSync}</div>
+                </div>
+            </div>
+            <div class="page-body">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px;">
+                    ${cards.map(c => `
+                        <div class="stat-card">
+                            <span class="stat-value" style="color:${c.color};">${c.value}</span>
+                            <span class="stat-label">${c.label}</span>
+                        </div>`).join('')}
+                </div>
+
+                ${s.total === 0 ? `
+                <div class="panel animate-in">
+                    <div class="panel-body" style="padding:40px;text-align:center;color:var(--text-muted);">
+                        ${status.running ? '⏳ Sincronização em andamento — aguarde...' :
+                          'Nenhuma vulnerabilidade correlacionada ainda.<br>Execute <b>Sincronizar CVEs</b> para baixar a base MSRC e correlacionar com os updates pendentes.'}
+                    </div>
+                </div>` : `
+                <div class="panel animate-in">
+                    <div class="panel-header">
+                        <span class="panel-title">CVEs por Severidade</span>
+                        <span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">Afetam apenas hosts com o KB pendente</span>
+                    </div>
+                    <div class="panel-body">
+                        <table class="data-table">
+                            <thead><tr>
+                                <th>CVE</th><th>Título</th><th>CVSS</th><th>Severidade</th>
+                                <th>KBs Pendentes</th><th>Hosts Afetados</th>
+                            </tr></thead>
+                            <tbody>
+                                ${data.cves.map(c => `<tr>
+                                    <td><a class="cve-link" href="https://www.cve.org/CVERecord?id=${c.cve_id}" target="_blank">${c.cve_id}</a></td>
+                                    <td style="font-size:12px;max-width:340px;">${c.title || '—'}</td>
+                                    <td class="mono" style="color:${(c.cvss_score || 0) >= 9 ? 'var(--danger)' : (c.cvss_score || 0) >= 7 ? 'var(--warning)' : 'inherit'};font-weight:600;">${c.cvss_score ?? '—'}</td>
+                                    <td><span class="badge-status ${sevBadge(c.severity)}">${c.severity}</span></td>
+                                    <td class="mono" style="font-size:11px;">${c.kbs.join(', ')}</td>
+                                    <td style="max-width:280px;">${c.hostnames.map(h => `<span class="host-chip">${h}</span>`).join('')}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>`}
+            </div>`;
+
+            if (status.running) {
+                const btn = document.getElementById('btn-sync');
+                if (btn) { btn.disabled = true; btn.textContent = '⏳ Sincronizando...'; }
+                setTimeout(() => { if (document.getElementById('btn-sync')) loadCves(); }, 15000);
+            }
+        }
+
+        async function startSync() {
+            const btn = document.getElementById('btn-sync');
+            btn.disabled = true;
+            btn.textContent = '⏳ Iniciando...';
+            const res = await apiFetch('/api/vulnerabilities/sync-cves', { method: 'POST' });
+            if (res && res.ok) {
+                btn.textContent = '⏳ Sincronizando...';
+                // Recarrega a cada 15s enquanto roda
+                const poll = setInterval(async () => {
+                    const st = await apiFetch('/api/vulnerabilities/sync-status');
+                    if (st && st.ok) {
+                        const s = await st.json();
+                        if (!s.running) { clearInterval(poll); loadCves(); return; }
+                        btn.textContent = `⏳ Sincronizando... (${s.total_cves} CVEs)`;
+                    }
+                }, 15000);
+            } else {
+                btn.disabled = false;
+                btn.textContent = '🔄 Sincronizar CVEs';
+                alert('Falha ao iniciar sincronização');
+            }
+        }
+
+        loadCves();
+    </script>
+</body>
+</html>
