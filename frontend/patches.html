@@ -292,13 +292,19 @@
             btn.disabled = true;
             btn.style.borderColor = 'var(--text-muted)';
             btn.style.color = 'var(--text-muted)';
-            btn.textContent = '⏳ Iniciando...';
-            const result = { success: false };
+            btn.textContent = '⏳ Enviando...';
             try {
-                const res = await fetch(`/api/hosts/${hostId}/action/install-updates-stream`, {
+                const res = await fetch(`/api/hosts/${hostId}/action/install-updates`, {
+                    method: 'POST',
                     headers: { ...authHeaders() },
                 });
-                if (!res.ok) {
+                if (res.ok) {
+                    const d = await res.json();
+                    btn.disabled = false;
+                    btn.classList.add('btn-success');
+                    btn.textContent = '▶ Em execução';
+                    toast(`Instalação iniciada em <b>${hostname}</b>`, d.task_id);
+                } else {
                     const err = await res.json().catch(() => ({}));
                     btn.disabled = false;
                     btn.classList.add('btn-error');
@@ -308,47 +314,25 @@
                         <div class="modal-sub">${hostname}</div>
                         <div class="modal-result">${err.detail || `Erro HTTP ${res.status}`}</div>
                         <div class="modal-actions"><button class="modal-btn primary" onclick="closeModal()">Fechar</button></div>`);
-                    return;
-                }
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const d = JSON.parse(line.slice(6));
-                                if (d.message) btn.textContent = d.message.slice(0, 24);
-                                if (d.type === 'done') {
-                                    result.success = !!d.success;
-                                    result.rebootRequired = result.rebootRequired || !!d.reboot_required;
-                                    if (d.found != null) result.found = d.found;
-                                    if (d.pending_after != null) result.pendingAfter = d.pending_after;
-                                }
-                                if (d.type === 'error' && d.message) result.error = d.message.replace(/^Falha: /, '');
-                                if (d.step === 'install' && d.install_result) Object.assign(result, d.install_result);
-                                if (d.step === 'rescan' && d.pending_after != null) result.pendingAfter = d.pending_after;
-                            } catch (e) {}
-                        }
-                    }
                 }
             } catch (err) {
-                result.error = err.message;
+                btn.disabled = false;
+                btn.classList.add('btn-error');
+                btn.textContent = '✗ Falhou';
+                openModal(`
+                    <h3 style="color:var(--danger);">❌ Erro de rede</h3>
+                    <div class="modal-sub">${hostname}</div>
+                    <div class="modal-result">${err.message}</div>
+                    <div class="modal-actions"><button class="modal-btn primary" onclick="closeModal()">Fechar</button></div>`);
             }
-            if (result.installLabel === undefined) {
-                result.found = result.found ?? '—';
-                result.installLabel = result.success ? 'Sucesso' : (result.error || 'Falhou');
-            }
-            btn.disabled = false;
-            btn.classList.add(result.success ? 'btn-success' : 'btn-error');
-            btn.textContent = result.success ? '✓ Concluído' : '✗ Falhou';
-            resultModal(hostname, result);
-            loadOverview();
+        }
+
+        function toast(msg, taskId) {
+            const t = document.createElement('div');
+            t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--bg-panel);border:1px solid var(--success);border-radius:var(--radius);padding:14px 18px;font-size:13px;color:var(--text-primary);box-shadow:0 8px 30px rgba(0,0,0,0.5);z-index:1100;max-width:360px;';
+            t.innerHTML = `✅ ${msg}<br><a href="/tasks.html" style="color:var(--accent);font-size:12px;text-decoration:none;">Acompanhar em Tasks →</a>`;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 8000);
         }
 
         loadOverview();

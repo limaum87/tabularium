@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from app.core.database import engine, Base, SessionLocal, User, Host, HostDistro
 from app.core.config import settings
 from app.core.security import hash_password
-from app.api import auth, users, hosts, reports, settings as settings_api, discovery, activity, vulnerabilities
+from app.api import auth, users, hosts, reports, settings as settings_api, discovery, activity, vulnerabilities, tasks
 
 # ---- Background Tasks ----
 
@@ -1050,6 +1050,7 @@ app.include_router(settings_api.router)
 app.include_router(discovery.router)
 app.include_router(activity.router)
 app.include_router(vulnerabilities.router)
+app.include_router(tasks.router)
 
 
 # Health check
