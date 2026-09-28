@@ -384,10 +384,8 @@ $out | ConvertTo-Json -Depth 4 -Compress
 """
 
 
-def _ps_install_updates(reboot=False):
-    reboot_ps = "Restart-Computer -Force" if reboot else ""
-    return r"""
-$ErrorActionPreference = "Stop"
+_WU_INNER_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
 $out = @{}
 try {
     $session = New-Object -ComObject Microsoft.Update.Session
@@ -420,12 +418,21 @@ try {
     $out.ok = $false
     $out.error = $_.Exception.Message
 }
-$out | ConvertTo-Json -Compress
-""" + reboot_ps
+$out | ConvertTo-Json -Compress | Set-Content -Path 'C:\Windows\Temp\tabularium_wu_result.json' -Encoding UTF8
+"""
+
+
+def _b64(s):
+    import base64
+    return base64.b64encode(s.encode("utf-8")).decode("ascii")
 
 
 def install_host_updates(hostname, cfg, on_step=None, reboot=False, install_timeout_sec=5400):
-    """Instala updates pendentes no host via Windows Update (COM) por WinRM.
+    """Instala updates pendentes no host via Windows Update por WinRM.
+
+    O instalador COM do WU nega acesso (E_ACCESSDENIED) quando executado
+    diretamente na sessão WinRM (sessão não-interativa). A solução é criar
+    uma tarefa agendada rodando como SYSTEM, dispará-la e ler o resultado.
 
     on_step: callback (message: str) para progresso.
     Retorna dict {found, download, install, reboot_required, ok, error}.
@@ -440,19 +447,82 @@ def install_host_updates(hostname, cfg, on_step=None, reboot=False, install_time
             except Exception:
                 pass
 
-    _notify("Buscando updates pendentes...")
-    raw = _run_ps_with_timeout(session, _ps_install_updates(reboot=reboot), label="install-updates", timeout_sec=install_timeout_sec)
-    parsed = _safe_json(raw, "install-updates") or {}
+    inner_b64 = _b64(_WU_INNER_SCRIPT + ("\nRestart-Computer -Force\n" if reboot else ""))
+
+    # 1. Registra e dispara a tarefa agendada como SYSTEM
+    _notify("Criando tarefa de instalação no host (como SYSTEM)...")
+    driver = rf"""
+$ErrorActionPreference = 'Stop'
+$dst  = "$env:windir\Temp\tabularium_wu.ps1"
+$result = "$env:windir\Temp\tabularium_wu_result.json"
+Remove-Item $result -ErrorAction SilentlyContinue
+[IO.File]::WriteAllBytes($dst, [Convert]::FromBase64String('{inner_b64}'))
+$a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dst`""
+$p = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+Register-ScheduledTask -TaskName 'TabulariumWUInstall' -Action $a -Principal $p -Force | Out-Null
+Start-ScheduledTask -TaskName 'TabulariumWUInstall'
+'OK'
+"""
+    raw = _run_ps_with_timeout(session, driver, label="wu-register-task", timeout_sec=60)
+    if "OK" not in raw:
+        raise RuntimeError(f"Falha ao registrar tarefa no host: {raw[:200]}")
+
+    # 2. Poll do arquivo de resultado (a instalação pode demorar dezenas de minutos)
+    _notify("Instalação em andamento no host (pode demorar muito)...")
+    poll = r"""
+$r = "$env:windir\Temp\tabularium_wu_result.json"
+$t = Get-ScheduledTask -TaskName 'TabulariumWUInstall' -ErrorAction SilentlyContinue
+@{
+    state = if ($t) { "$($t.State)" } else { $null }
+    done  = [bool](Test-Path $r)
+    raw   = if (Test-Path $r) { Get-Content $r -Raw } else { $null }
+} | ConvertTo-Json -Compress
+"""
+    import time
+    deadline = time.time() + install_timeout_sec
+    parsed = None
+    while time.time() < deadline:
+        time.sleep(20)
+        try:
+            raw = _run_ps_with_timeout(session, poll, label="wu-poll", timeout_sec=45)
+            parsed = _safe_json(raw, "wu-poll") or {}
+        except Exception as e:
+            _notify(f"⚠ Poll falhou (host pode estar reiniciando): {str(e)[:80]}")
+            continue
+        if parsed.get("done"):
+            break
+        if reboot and not parsed.get("state"):
+            break
+    else:
+        raise TimeoutError(f"Timeout ({install_timeout_sec}s) aguardando instalação no host")
+
+    # 3. Limpa tarefa e arquivos temporários
+    try:
+        _run_ps_with_timeout(session, r"""
+Unregister-ScheduledTask -TaskName 'TabulariumWUInstall' -Confirm:$false -ErrorAction SilentlyContinue
+Remove-Item "$env:windir\Temp\tabularium_wu.ps1" -ErrorAction SilentlyContinue
+Remove-Item "$env:windir\Temp\tabularium_wu_result.json" -ErrorAction SilentlyContinue
+""", label="wu-cleanup", timeout_sec=30)
+    except Exception:
+        pass
+
+    if not parsed or not parsed.get("raw"):
+        return {"ok": False, "error": "Tarefa executada mas resultado não foi gerado (host reiniciou?)", "reboot": reboot}
+
+    content = parsed["raw"].strip()
+    if content.startswith("\ufeff"):
+        content = content[1:]
+    result = _safe_json(content, "wu-result") or {"ok": False, "error": "Resultado inválido"}
 
     result_codes = {2: "Sucesso", 3: "Sucesso com erros", 4: "Falhou", 5: "Abortado", None: "—"}
-    parsed["install_label"] = result_codes.get(parsed.get("install"), str(parsed.get("install")))
-    if not parsed.get("ok"):
-        _notify(f"✗ Update falhou: {str(parsed.get('error'))[:100]}")
+    result["install_label"] = result_codes.get(result.get("install"), str(result.get("install")))
+    if not result.get("ok"):
+        _notify(f"✗ Update falhou: {str(result.get('error'))[:100]}")
     else:
-        _notify(f"✓ Instalação: {parsed['install_label']} ({parsed.get('found', 0)} update(s))")
-        if parsed.get("reboot"):
+        _notify(f"✓ Instalação: {result['install_label']} ({result.get('found', 0)} update(s))")
+        if result.get("reboot"):
             _notify("⚠ Reboot necessário para concluir")
-    return parsed
+    return result
 
 
 def scan_host_patches(hostname, cfg, on_step=None):
