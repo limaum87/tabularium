@@ -259,6 +259,21 @@
                         <div id="schedule-status" style="margin-top:12px;font-size:12px;color:var(--text-muted);font-family:var(--font-mono);"></div>
                     </div>
                 </div>
+
+                <!-- API Keys -->
+                <div class="panel animate-in animate-in-delay-2" style="margin-bottom:20px;">
+                    <div class="panel-header">
+                        <span class="panel-title">🔑 API Keys (Agentes de IA / Integrações)</span>
+                        <button class="btn-primary-accent" onclick="createApiKey()" style="padding:8px 18px;font-size:12px;">+ Nova API Key</button>
+                    </div>
+                    <div class="panel-body" style="padding:24px;">
+                        <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px;">
+                            Permite que agentes de IA consultem os dados da frota via <code style="font-family:var(--font-mono);background:var(--accent-dim);padding:1px 4px;border-radius:3px;">X-API-Key</code> (acesso somente leitura). A chave é exibida <strong style="color:var(--text-primary);">apenas uma vez</strong> no momento da criação.
+                        </div>
+                        <div id="apikeys-alert"></div>
+                        <div id="apikeys-list"></div>
+                    </div>
+                </div>
             </div>
             `;
 
@@ -685,11 +700,81 @@
             } catch(e) {}
         }
 
+        // ---- API Keys ----
+
+        async function loadApiKeys() {
+            try {
+                const res = await apiFetch('/api/settings/apikeys');
+                if (!res || !res.ok) return;
+                const keys = await res.json();
+                const el = document.getElementById('apikeys-list');
+                if (!el) return;
+                if (!keys.length) {
+                    el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);font-style:italic;">Nenhuma API key criada.</div>';
+                    return;
+                }
+                el.innerHTML = `
+                    <table style="width:100%;font-size:12px;border-collapse:collapse;">
+                        <thead><tr style="text-align:left;color:var(--text-muted);border-bottom:1px solid var(--border-color);">
+                            <th style="padding:8px;">Nome</th><th style="padding:8px;">Chave</th><th style="padding:8px;">Status</th><th style="padding:8px;">Último uso</th><th style="padding:8px;">Criada em</th><th style="padding:8px;"></th>
+                        </tr></thead>
+                        <tbody>
+                        ${keys.map(k => `
+                            <tr style="border-bottom:1px solid var(--border-color);">
+                                <td style="padding:8px;">${esc(k.name)}</td>
+                                <td style="padding:8px;font-family:var(--font-mono);">${esc(k.key_prefix)}…</td>
+                                <td style="padding:8px;">${k.is_active
+                                    ? '<span style="color:var(--success, #4ade80);">● Ativa</span>'
+                                    : '<span style="color:var(--text-muted);">○ Inativa</span>'}</td>
+                                <td style="padding:8px;">${k.last_used_at ? new Date(k.last_used_at).toLocaleString('pt-BR') : '—'}</td>
+                                <td style="padding:8px;">${k.created_at ? new Date(k.created_at).toLocaleDateString('pt-BR') : '—'}</td>
+                                <td style="padding:8px;text-align:right;white-space:nowrap;">
+                                    <button class="btn-key-action" onclick="toggleApiKey(${k.id}, ${!k.is_active})">${k.is_active ? 'Desativar' : 'Ativar'}</button>
+                                    <button class="btn-key-danger" onclick="deleteApiKey(${k.id}, '${esc(k.name).replace(/'/g, "\\'")}')">Revogar</button>
+                                </td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>`;
+            } catch(e) { console.error(e); }
+        }
+
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"/]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','/':'&#47;'}[c]));
+        }
+
+        async function createApiKey() {
+            const name = prompt('Nome da API key (ex: "Agente IA - Suporte"):', '');
+            if (!name || !name.trim()) return;
+            try {
+                const res = await apiFetch('/api/settings/apikeys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name.trim() }),
+                });
+                const data = await res.json();
+                if (!res.ok) { alert(data.detail || 'Erro ao criar API key'); return; }
+                alert('API key criada! Copie agora — ela NÃO será exibida novamente:\n\n' + data.key);
+                loadApiKeys();
+            } catch(e) { alert('Erro ao criar API key'); }
+        }
+
+        async function toggleApiKey(id, active) {
+            await apiFetch(`/api/settings/apikeys/${id}?is_active=${active}`, { method: 'PUT' });
+            loadApiKeys();
+        }
+
+        async function deleteApiKey(id, name) {
+            if (!confirm(`Revogar a API key "${name}"? Agentes usando ela perderão o acesso imediatamente.`)) return;
+            await apiFetch(`/api/settings/apikeys/${id}`, { method: 'DELETE' });
+            loadApiKeys();
+        }
+
         // Carrega status do schedule junto com settings
         const origLoad = loadSettings;
         loadSettings = async function() {
             await origLoad();
             loadScheduleStatus();
+            loadApiKeys();
             // Atualiza a cada 30s
             setInterval(loadScheduleStatus, 30000);
         };

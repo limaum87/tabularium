@@ -9,7 +9,7 @@ from app.core.database import (
     HostLicense, HostSoftware, HostRemoteAccess, ScanHistory, HostDistro,
     HostPatch, HostPendingUpdate, HostPatchStatus,
 )
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_read_principal
 from app.schemas.schemas import CheckinPayload, HostResponse
 from app.api.activity import log_activity
 
@@ -277,7 +277,7 @@ def checkin(body: CheckinPayload, db: Session = Depends(get_db)):
 # ---- Leitura ----
 
 @router.get("", response_model=list[HostResponse])
-def list_hosts(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_hosts(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     _auto_legacy_check(db)
     return db.query(Host).filter(Host.is_legacy == False).order_by(Host.hostname).all()
 
@@ -285,7 +285,7 @@ def list_hosts(db: Session = Depends(get_db), _=Depends(get_current_user)):
 # ---- Legados ----
 
 @router.get("/legacy", response_model=list[HostResponse])
-def list_legacy(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_legacy(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     """Lista hosts legados (90+ dias sem contato)."""
     _auto_legacy_check(db)
     return (
@@ -383,7 +383,7 @@ def ping_sweep(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.get("/logged-users")
-def logged_users(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def logged_users(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     """Retorna todos os usuários coletados e a última máquina em que logaram."""
     from sqlalchemy import func
 
@@ -1511,7 +1511,7 @@ def action_enable_winrm(host_id: int, db: Session = Depends(get_db), _=Depends(g
 
 
 @router.get("/{host_id}")
-def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_host(host_id: int, db: Session = Depends(get_db), _=Depends(get_read_principal)):
     host = db.query(Host).filter(Host.id == host_id).first()
     if not host:
         raise HTTPException(status_code=404, detail="Host não encontrado")

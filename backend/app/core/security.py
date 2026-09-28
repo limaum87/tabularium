@@ -3,11 +3,13 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 # ---- Senha ----
@@ -58,3 +60,52 @@ def require_role(*roles: str):
             raise HTTPException(status_code=403, detail="Permissão insuficiente")
         return current_user
     return checker
+
+
+# ---- API Keys (agentes de IA / integrações) ----
+
+import hashlib
+import secrets
+
+from fastapi import Header
+
+from app.core.database import ApiKey, get_db  # noqa: E402
+
+API_KEY_PREFIX = "tabk_"
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    """Gera uma nova API key. Retorna (chave_completa, prefixo, hash)."""
+    raw = secrets.token_hex(24)
+    full_key = f"{API_KEY_PREFIX}{raw}"
+    key_hash = hashlib.sha256(full_key.encode()).hexdigest()
+    return full_key, full_key[:12], key_hash
+
+
+def get_read_principal(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    token: str | None = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Autentica via X-API-Key OU JWT (oauth2_scheme é opcional aqui).
+
+    Para endpoints somente leitura — API keys têm papel efetivo de viewer.
+    """
+    if x_api_key:
+        key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+        api_key = db.query(ApiKey).filter(
+            ApiKey.key_hash == key_hash, ApiKey.is_active == True  # noqa: E712
+        ).first()
+        if not api_key:
+            raise HTTPException(status_code=401, detail="API key inválida ou revogada")
+        api_key.last_used_at = datetime.utcnow()
+        db.commit()
+        return {"sub": f"apikey:{api_key.id}", "role": "viewer", "auth": "api_key"}
+
+    # Fallback: JWT normal
+    if not token:
+        raise HTTPException(status_code=401, detail="Não autenticado", headers={"WWW-Authenticate": "Bearer"})
+    payload = decode_access_token(token)
+    if "sub" not in payload:
+        raise HTTPException(status_code=401, detail="Token malformado")
+    return payload

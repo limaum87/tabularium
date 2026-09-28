@@ -781,3 +781,25 @@ a:hover { color: #e8c84a; }
         grid-template-columns: repeat(2, 1fr);
     }
 }
+
+/* ---- API Keys (settings) ---- */
+.btn-key-action {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 4px 10px;
+}
+.btn-key-action:hover { background: var(--accent-dim); }
+.btn-key-danger {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #f87171;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    padding: 4px 10px;
+}
+.btn-key-danger:hover { border-color: #f87171; }

@@ -5,14 +5,14 @@ from sqlalchemy import func
 from app.core.database import (
     get_db, HostSoftware, HostLicense, ScanHistory, Host, HostHardware, HostNetwork,
 )
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_read_principal
 from app.api.hosts import _auto_legacy_check
 
 router = APIRouter(tags=["reports"])
 
 
 @router.get("/api/software")
-def list_software(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_software(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     """Softwares agrupados por nome com contagem de instalações."""
     rows = (
         db.query(
@@ -32,7 +32,7 @@ def list_software(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.get("/api/licenses")
-def list_licenses(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_licenses(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     """Todas as licenças detectadas por host."""
     rows = (
         db.query(HostLicense, Host.hostname)
@@ -54,7 +54,7 @@ def list_licenses(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.get("/api/scans")
-def list_scans(limit: int = 50, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_scans(limit: int = 50, db: Session = Depends(get_db), _=Depends(get_read_principal)):
     """Histórico de coletas."""
     rows = (
         db.query(ScanHistory)
@@ -76,7 +76,7 @@ def list_scans(limit: int = 50, db: Session = Depends(get_db), _=Depends(get_cur
 
 
 @router.get("/api/os-versions")
-def os_versions(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def os_versions(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     """Distribuição de versões de SO (Windows editions + Linux)."""
     _auto_legacy_check(db)
 
@@ -134,7 +134,7 @@ def os_versions(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.get("/api/windows-versions")
-def windows_versions(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def windows_versions(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     """Lista todos os hosts Windows com detalhes de versão (Windows 10/11, build, edition)."""
     _auto_legacy_check(db)
 
@@ -259,7 +259,7 @@ def windows_versions(db: Session = Depends(get_db), _=Depends(get_current_user))
 
 
 @router.get("/api/compliance")
-def compliance(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def compliance(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     """Resumo de compliance de licenças."""
     _auto_legacy_check(db)
 

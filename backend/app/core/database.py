@@ -36,6 +36,18 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(150), nullable=False)
+    key_prefix = Column(String(12), nullable=False, index=True)  # ex: "tabk_abcd1234" (para identificar)
+    key_hash = Column(String(64), unique=True, nullable=False, index=True)  # sha256 hex da chave completa
+    is_active = Column(Boolean, default=True, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Host(Base):
     __tablename__ = "hosts"
 

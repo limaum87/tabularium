@@ -69,6 +69,19 @@ Na tela de **Configurações**, preencha:
 2. **WinRM** — usuário e senha (formato `DOMINIO\usuario`)
 3. **DNS** — IP do DNS corporativo + domínio de busca (ex: `empresa.local`)
 4. Clique em **Descobrir Máquinas** para importar hosts do AD
+5. **API Keys** — crie chaves para que agentes de IA/integrações consultem a frota (somente leitura)
+
+### API Keys (agentes de IA)
+
+Em **Configurações → API Keys**, crie uma chave e copie-a (exibida apenas uma vez). O agente usa o header `X-API-Key`:
+
+```bash
+curl -H "X-API-Key: tabk_..." http://localhost:8091/api/hosts
+curl -H "X-API-Key: tabk_..." http://localhost:8091/api/hosts/1
+curl -H "X-API-Key: tabk_..." http://localhost:8091/api/reports/software
+```
+
+Endpoints liberados (somente leitura): `GET /api/hosts`, `/api/hosts/legacy`, `/api/hosts/{id}` (com hardware, discos, rede, licenças, software), `/api/hosts/logged-users` e os relatórios em `/api/*` (`software`, `licenses`, `os-versions`, `windows-versions`, `compliance`, `scans`). Ações de escrita/ação remota exigem login normal — a chave é revogável e o último uso é registrado.
 
 ### 6. Popular com dados de demonstração (opcional)
 

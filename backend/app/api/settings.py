@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 
-from app.core.database import get_db, Setting
-from app.core.security import require_role
+from app.core.database import get_db, Setting, ApiKey
+from app.core.security import require_role, generate_api_key
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -54,6 +54,70 @@ class DnsApplyInput(BaseModel):
 
 class DnsTestInput(BaseModel):
     hostname: str  # nome para testar resolução, ex: "wir-adm-01"
+
+
+class ApiKeyCreateInput(BaseModel):
+    name: str
+
+
+# ---- API Keys ----
+
+@router.get("/apikeys")
+def list_api_keys(db: Session = Depends(get_db), _=Depends(require_role("admin"))):
+    """Lista as API keys (sem expor a chave completa)."""
+    keys = db.query(ApiKey).order_by(ApiKey.created_at.desc()).all()
+    return [
+        {
+            "id": k.id,
+            "name": k.name,
+            "key_prefix": k.key_prefix,
+            "is_active": k.is_active,
+            "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+            "created_at": k.created_at.isoformat() if k.created_at else None,
+        }
+        for k in keys
+    ]
+
+
+@router.post("/apikeys")
+def create_api_key(body: ApiKeyCreateInput, db: Session = Depends(get_db), _=Depends(require_role("admin"))):
+    """Cria uma API key. A chave completa é retornada UMA única vez."""
+    if not body.name.strip():
+        raise HTTPException(status_code=422, detail="Nome obrigatório")
+    full_key, prefix, key_hash = generate_api_key()
+    k = ApiKey(name=body.name.strip(), key_prefix=prefix, key_hash=key_hash)
+    db.add(k)
+    db.commit()
+    db.refresh(k)
+    return {
+        "id": k.id,
+        "name": k.name,
+        "key": full_key,  # exibida apenas nesta resposta
+        "key_prefix": k.key_prefix,
+        "created_at": k.created_at.isoformat(),
+    }
+
+
+@router.put("/apikeys/{key_id}")
+def toggle_api_key(key_id: int, is_active: bool, db: Session = Depends(get_db), _=Depends(require_role("admin"))):
+    """Ativa/desativa uma API key."""
+    k = db.query(ApiKey).filter(ApiKey.id == key_id).first()
+    if not k:
+        raise HTTPException(status_code=404, detail="API key não encontrada")
+    k.is_active = is_active
+    db.commit()
+    return {"id": k.id, "is_active": k.is_active}
+
+
+@router.delete("/apikeys/{key_id}")
+def delete_api_key(key_id: int, db: Session = Depends(get_db), _=Depends(require_role("admin"))):
+    """Revoga (remove) uma API key."""
+    k = db.query(ApiKey).filter(ApiKey.id == key_id).first()
+    if not k:
+        raise HTTPException(status_code=404, detail="API key não encontrada")
+    db.delete(k)
+    db.commit()
+    return {"detail": "API key removida"}
 
 
 # ---- CRUD ----
