@@ -982,8 +982,18 @@ def action_install_updates_stream(host_id: int, reboot: bool = False, db: Sessio
             return
 
         success = bool(result.get("ok")) and result.get("install") in (2, 3, None)
+        result_codes = {2: "Sucesso", 3: "Sucesso com erros", 4: "Falhou", 5: "Abortado", None: "Não executado"}
+        yield sse({"type": "step", "step": "install", "message": f"Instalação: {result.get('install_label', '—')}", "install_result": {
+            "found": result.get("found", 0),
+            "download": result.get("download"),
+            "downloadLabel": result_codes.get(result.get("download"), str(result.get("download"))) if result.get("download") is not None else None,
+            "install": result.get("install"),
+            "installLabel": result.get("install_label") or result_codes.get(result.get("install"), "—"),
+            "rebootRequired": bool(result.get("reboot")),
+        }})
 
         # Reescaneia updates pendentes para atualizar o banco (pula se o host está reiniciando)
+        pending_after = None
         if success and not reboot:
             try:
                 yield sse({"type": "step", "step": "rescan", "message": "Reescaneando updates pendentes..."})
@@ -1009,7 +1019,8 @@ def action_install_updates_stream(host_id: int, reboot: bool = False, db: Sessio
                 else:
                     db.add(HostPatchStatus(host_id=host_id, **ps_values))
                 db.commit()
-                yield sse({"type": "step_ok", "step": "rescan", "message": f"✓ {len(pending)} update(s) ainda pendente(s)"})
+                pending_after = len(pending)
+                yield sse({"type": "step_ok", "step": "rescan", "message": f"✓ {len(pending)} update(s) ainda pendente(s)", "pending_after": pending_after})
             except Exception as e:
                 yield sse({"type": "step_warn", "step": "rescan", "message": f"⚠ Reescaneamento falhou: {str(e)[:100]}"})
 
@@ -1022,7 +1033,7 @@ def action_install_updates_stream(host_id: int, reboot: bool = False, db: Sessio
             details={"found": result.get("found"), "install": result.get("install"), "reboot_required": result.get("reboot")},
             source="manual")
 
-        yield sse({"type": "done", "success": success, "message": f"Instalação concluída: {result.get('install_label', '—')}", "reboot_required": bool(result.get("reboot"))})
+        yield sse({"type": "done", "success": success, "message": f"Instalação concluída: {result.get('install_label', '—')}", "reboot_required": bool(result.get("reboot")), "found": result.get("found", 0), "pending_after": pending_after})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

@@ -37,12 +37,65 @@
         }
         .scan-btn:hover { background: var(--accent-dim); }
         .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .scan-btn.btn-success { border-color: var(--success); color: var(--success); }
+        .scan-btn.btn-error { border-color: var(--danger); color: var(--danger); }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal-box {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius);
+            width: 440px;
+            max-width: 92vw;
+            padding: 24px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+        }
+        .modal-box h3 { margin: 0 0 6px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+        .modal-box .modal-sub { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; font-family: var(--font-mono); }
+        .modal-result {
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            padding: 12px 14px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+        .modal-result .row { display: flex; justify-content: space-between; }
+        .modal-result .row span:first-child { color: var(--text-muted); }
+        .modal-result .row .mono { font-family: var(--font-mono); }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+        .modal-btn {
+            border: 1px solid var(--border-subtle);
+            background: none;
+            color: var(--text-main);
+            padding: 8px 18px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-family: var(--font-body);
+            font-size: 13px;
+        }
+        .modal-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .modal-btn:hover { filter: brightness(1.15); }
+        .modal-confirm-text { font-size: 13px; line-height: 1.6; margin: 0 0 18px; }
+        .modal-confirm-text b { color: var(--warning); }
     </style>
     <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
 </head>
 <body>
     <div id="app"></div>
+
+    <div class="modal-overlay" id="updateModal">
+        <div class="modal-box" id="updateModalBox"></div>
+    </div>
 
     <script src="/js/auth.js"></script>
     <script src="/js/layout.js"></script>
@@ -129,7 +182,7 @@
                                         <td class="mono" style="font-size:11px;">${h.last_scan ? new Date(h.last_scan).toLocaleString('pt-BR') : 'Nunca'}</td>
                                         <td style="white-space:nowrap;">
                                             <button class="scan-btn" onclick="scanHost(${h.host_id}, '${h.hostname}', this)">🩹 Scan</button>
-                                            <button class="scan-btn" style="border-color:var(--warning);color:var(--warning);margin-left:6px;" onclick="updateHost(${h.host_id}, '${h.hostname}', ${h.pending_count}, this)">⬆ Update</button>
+                                            <button class="scan-btn" style="border-color:var(--warning);color:var(--warning);margin-left:6px;" onclick="updateHost(${h.host_id}, '${h.hostname}', ${h.pending_count}, ${h.reboot_required ? 'true' : 'false'}, this)">⬆ Update</button>
                                         </td>
                                     </tr>`;
                                 }).join('') : '<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum host ativo</td></tr>'}
@@ -182,19 +235,78 @@
             loadOverview();
         }
 
-        async function updateHost(hostId, hostname, pendingCount, btn) {
-            if (!confirm(`Instalar ${pendingCount} update(s) pendente(s) em '${hostname}' via Windows Update?\n\nIsso pode demorar muito (download + instalação) e pode exigir reboot.`)) return;
+        function openModal(html) {
+            const overlay = document.getElementById('updateModal');
+            document.getElementById('updateModalBox').innerHTML = html;
+            overlay.classList.add('open');
+        }
+        function closeModal() {
+            document.getElementById('updateModal').classList.remove('open');
+        }
+
+        function confirmUpdateModal(hostname, pendingCount, rebootWarn) {
+            return new Promise(resolve => {
+                openModal(`
+                    <h3>⬆ Instalar updates</h3>
+                    <div class="modal-sub">${hostname}</div>
+                    <p class="modal-confirm-text">
+                        Instalar <b>${pendingCount} update(s) pendente(s)</b> nesta máquina via Windows Update?<br><br>
+                        ⏱ Pode demorar muito (download + instalação).${rebootWarn ? '<br>⚠ Este host já indica <b>reboot pendente</b>.' : ''}
+                    </p>
+                    <div class="modal-actions">
+                        <button class="modal-btn" id="mCancel">Cancelar</button>
+                        <button class="modal-btn primary" id="mOk">Instalar agora</button>
+                    </div>`);
+                document.getElementById('mCancel').onclick = () => { closeModal(); resolve(false); };
+                document.getElementById('mOk').onclick = () => { closeModal(); resolve(true); };
+            });
+        }
+
+        function resultModal(hostname, r) {
+            const ok = r.success;
+            const icon = ok ? '✅' : '❌';
+            const title = ok ? 'Update concluído' : 'Update com problema';
+            const color = ok ? 'var(--success)' : 'var(--danger)';
+            const row = (k, v, vc) => `<div class="row"><span>${k}</span><span class="mono" style="${vc ? `color:${vc};` : ''}">${v}</span></div>`;
+            const rows = [
+                row('Updates encontrados', r.found ?? '—'),
+                r.download != null ? row('Download', r.downloadLabel, r.download === 2 ? 'var(--success)' : 'var(--warning)') : '',
+                row('Instalação', r.installLabel, ok ? 'var(--success)' : 'var(--danger)'),
+                r.pendingAfter != null ? row('Ainda pendentes', r.pendingAfter, r.pendingAfter === 0 ? 'var(--success)' : 'var(--warning)') : '',
+                r.rebootRequired ? row('Reboot', 'Necessário ⚠', 'var(--warning)') : '',
+                r.error ? row('Erro', r.error.slice(0, 60), 'var(--danger)') : '',
+            ].join('');
+            openModal(`
+                <h3 style="color:${color};">${icon} ${title}</h3>
+                <div class="modal-sub">${hostname}</div>
+                <div class="modal-result">${rows}</div>
+                <div class="modal-actions">
+                    <button class="modal-btn primary" onclick="closeModal()">Fechar</button>
+                </div>`);
+        }
+
+        async function updateHost(hostId, hostname, pendingCount, rebootWarn, btn) {
+            const go = await confirmUpdateModal(hostname, pendingCount, rebootWarn);
+            if (!go) return;
             btn.disabled = true;
+            btn.style.borderColor = 'var(--text-muted)';
+            btn.style.color = 'var(--text-muted)';
             btn.textContent = '⏳ Iniciando...';
+            const result = { success: false };
             try {
                 const res = await fetch(`/api/hosts/${hostId}/action/install-updates-stream`, {
                     headers: { ...authHeaders() },
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    alert(err.detail || `Erro HTTP ${res.status}`);
                     btn.disabled = false;
-                    btn.textContent = '⬆ Update';
+                    btn.classList.add('btn-error');
+                    btn.textContent = '✗ Falhou';
+                    openModal(`
+                        <h3 style="color:var(--danger);">❌ Não foi possível iniciar</h3>
+                        <div class="modal-sub">${hostname}</div>
+                        <div class="modal-result">${err.detail || `Erro HTTP ${res.status}`}</div>
+                        <div class="modal-actions"><button class="modal-btn primary" onclick="closeModal()">Fechar</button></div>`);
                     return;
                 }
                 const reader = res.body.getReader();
@@ -211,14 +323,30 @@
                             try {
                                 const d = JSON.parse(line.slice(6));
                                 if (d.message) btn.textContent = d.message.slice(0, 24);
-                                if (d.type === 'done' && d.message) alert(`Update '${hostname}': ${d.message}${d.reboot_required ? '\n⚠ Reboot necessário.' : ''}`);
+                                if (d.type === 'done') {
+                                    result.success = !!d.success;
+                                    result.rebootRequired = result.rebootRequired || !!d.reboot_required;
+                                    if (d.found != null) result.found = d.found;
+                                    if (d.pending_after != null) result.pendingAfter = d.pending_after;
+                                }
+                                if (d.type === 'error' && d.message) result.error = d.message.replace(/^Falha: /, '');
+                                if (d.step === 'install' && d.install_result) Object.assign(result, d.install_result);
+                                if (d.step === 'rescan' && d.pending_after != null) result.pendingAfter = d.pending_after;
                             } catch (e) {}
                         }
                     }
                 }
             } catch (err) {
-                alert('Erro: ' + err.message);
+                result.error = err.message;
             }
+            if (result.installLabel === undefined) {
+                result.found = result.found ?? '—';
+                result.installLabel = result.success ? 'Sucesso' : (result.error || 'Falhou');
+            }
+            btn.disabled = false;
+            btn.classList.add(result.success ? 'btn-success' : 'btn-error');
+            btn.textContent = result.success ? '✓ Concluído' : '✗ Falhou';
+            resultModal(hostname, result);
             loadOverview();
         }
 
