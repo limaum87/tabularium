@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, APIKeyHeader
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -10,6 +10,7 @@ from app.core.config import settings
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False, description="API key de agente/integração (somente leitura)")
 
 
 # ---- Senha ----
@@ -67,7 +68,6 @@ def require_role(*roles: str):
 import hashlib
 import secrets
 
-from fastapi import Header
 
 from app.core.database import ApiKey, get_db  # noqa: E402
 
@@ -83,7 +83,7 @@ def generate_api_key() -> tuple[str, str, str]:
 
 
 def get_read_principal(
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    x_api_key: str | None = Depends(api_key_scheme),
     token: str | None = Depends(oauth2_scheme_optional),
     db: Session = Depends(get_db),
 ) -> dict:
