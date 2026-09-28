@@ -924,6 +924,109 @@ def _collect_stream_winrm(host_id: int, host, db: Session):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@router.get("/{host_id}/action/install-updates-stream")
+def action_install_updates_stream(host_id: int, reboot: bool = False, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Instala updates pendentes do host via Windows Update (WinRM), com progresso em SSE."""
+    import json as json_mod
+    import threading
+    import queue as queue_mod
+    from app.collector.winrm_collect import _get_settings, install_host_updates, scan_host_patches, _ps_pending_updates, _connect, _make_fqdn, _run_ps_with_timeout, _safe_json
+    from app.core.database import HostPendingUpdate, HostPatchStatus
+
+    host = db.query(Host).filter(Host.id == host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host não encontrado")
+
+    cfg = _get_settings(db)
+    if not cfg:
+        raise HTTPException(status_code=400, detail="Credenciais WinRM não configuradas. Configure em Configurações → WinRM.")
+
+    def sse(data):
+        return f"data: {json_mod.dumps(data, ensure_ascii=False)}\n\n"
+
+    def event_stream():
+        yield sse({"type": "start", "hostname": host.hostname})
+        steps = queue_mod.Queue()
+
+        def worker():
+            try:
+                result = install_host_updates(host.hostname, cfg, on_step=lambda m: steps.put(("step", m)), reboot=reboot)
+                steps.put(("result", result))
+            except Exception as e:
+                steps.put(("exception", str(e)))
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+        result = None
+        error = None
+        while True:
+            try:
+                kind, payload = steps.get(timeout=7200)
+            except Exception:
+                error = "Timeout aguardando instalação"
+                break
+            if kind == "step":
+                cls = "step_ok" if payload.startswith("✓") else "step_warn" if payload.startswith("⚠") else "step"
+                yield sse({"type": cls, "step": "install", "message": payload})
+            elif kind == "exception":
+                error = payload
+                break
+            else:
+                result = payload
+                break
+
+        if error:
+            yield sse({"type": "error", "step": "install", "message": f"Falha: {str(error)[:200]}"})
+            yield sse({"type": "done", "success": False, "message": "Falha na instalação dos updates"})
+            return
+
+        success = bool(result.get("ok")) and result.get("install") in (2, 3, None)
+
+        # Reescaneia updates pendentes para atualizar o banco (pula se o host está reiniciando)
+        if success and not reboot:
+            try:
+                yield sse({"type": "step", "step": "rescan", "message": "Reescaneando updates pendentes..."})
+                scan = scan_host_patches(host.hostname, cfg)
+                pending = scan.get("pending", [])
+                status = scan.get("status", {})
+                now = datetime.utcnow()
+                db.query(HostPendingUpdate).filter(HostPendingUpdate.host_id == host_id).delete()
+                for p in pending:
+                    db.add(HostPendingUpdate(host_id=host_id, kb=p.get("kb"), title=p.get("title"), severity=p.get("severity"), reboot_required=bool(p.get("reboot")), updated_at=now))
+                critical = sum(1 for p in pending if (p.get("severity") or "").lower() == "critical")
+                existing_ps = db.query(HostPatchStatus).filter(HostPatchStatus.host_id == host_id).first()
+                ps_values = {
+                    "wu_last_success": status.get("wu_last_success"),
+                    "pending_count": len(pending),
+                    "critical_pending": critical,
+                    "last_scan": now,
+                    "updated_at": now,
+                }
+                if existing_ps:
+                    for k, v in ps_values.items():
+                        setattr(existing_ps, k, v)
+                else:
+                    db.add(HostPatchStatus(host_id=host_id, **ps_values))
+                db.commit()
+                yield sse({"type": "step_ok", "step": "rescan", "message": f"✓ {len(pending)} update(s) ainda pendente(s)"})
+            except Exception as e:
+                yield sse({"type": "step_warn", "step": "rescan", "message": f"⚠ Reescaneamento falhou: {str(e)[:100]}"})
+
+        log_activity(db,
+            activity_type="manual_collect",
+            hostname=host.hostname,
+            host_id=host_id,
+            status="success" if success else "error",
+            message=f"Update remoto: {result.get('found', 0)} update(s), resultado: {result.get('install_label', '—')}",
+            details={"found": result.get("found"), "install": result.get("install"), "reboot_required": result.get("reboot")},
+            source="manual")
+
+        yield sse({"type": "done", "success": success, "message": f"Instalação concluída: {result.get('install_label', '—')}", "reboot_required": bool(result.get("reboot"))})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @router.get("/{host_id}/action/scan-updates-stream")
 def action_scan_updates_stream(host_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Escaneia patches do host via SSE: KBs instalados + updates pendentes + build."""

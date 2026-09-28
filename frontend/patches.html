@@ -127,7 +127,10 @@
                                         <td><span class="badge-status" style="color:${riskColor};border-color:${riskColor};">${riskLabel}${h.risk_score !== null ? ` ${h.risk_score}` : ''}</span></td>
                                         <td>${h.reboot_required ? '<span class="badge-status badge-warning">Sim</span>' : '—'}</td>
                                         <td class="mono" style="font-size:11px;">${h.last_scan ? new Date(h.last_scan).toLocaleString('pt-BR') : 'Nunca'}</td>
-                                        <td><button class="scan-btn" onclick="scanHost(${h.host_id}, '${h.hostname}', this)">🩹 Scan</button></td>
+                                        <td style="white-space:nowrap;">
+                                            <button class="scan-btn" onclick="scanHost(${h.host_id}, '${h.hostname}', this)">🩹 Scan</button>
+                                            <button class="scan-btn" style="border-color:var(--warning);color:var(--warning);margin-left:6px;" onclick="updateHost(${h.host_id}, '${h.hostname}', ${h.pending_count}, this)">⬆ Update</button>
+                                        </td>
                                     </tr>`;
                                 }).join('') : '<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text-muted);">Nenhum host ativo</td></tr>'}
                             </tbody>
@@ -169,6 +172,46 @@
                                 const d = JSON.parse(line.slice(6));
                                 if (d.message) lastMsg = d.message;
                                 btn.textContent = d.message ? d.message.slice(0, 24) : '⏳ ...';
+                            } catch (e) {}
+                        }
+                    }
+                }
+            } catch (err) {
+                alert('Erro: ' + err.message);
+            }
+            loadOverview();
+        }
+
+        async function updateHost(hostId, hostname, pendingCount, btn) {
+            if (!confirm(`Instalar ${pendingCount} update(s) pendente(s) em '${hostname}' via Windows Update?\n\nIsso pode demorar muito (download + instalação) e pode exigir reboot.`)) return;
+            btn.disabled = true;
+            btn.textContent = '⏳ Iniciando...';
+            try {
+                const res = await fetch(`/api/hosts/${hostId}/action/install-updates-stream`, {
+                    headers: { ...authHeaders() },
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    alert(err.detail || `Erro HTTP ${res.status}`);
+                    btn.disabled = false;
+                    btn.textContent = '⬆ Update';
+                    return;
+                }
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const d = JSON.parse(line.slice(6));
+                                if (d.message) btn.textContent = d.message.slice(0, 24);
+                                if (d.type === 'done' && d.message) alert(`Update '${hostname}': ${d.message}${d.reboot_required ? '\n⚠ Reboot necessário.' : ''}`);
                             } catch (e) {}
                         }
                     }

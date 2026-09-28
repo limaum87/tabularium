@@ -384,6 +384,77 @@ $out | ConvertTo-Json -Depth 4 -Compress
 """
 
 
+def _ps_install_updates(reboot=False):
+    reboot_ps = "Restart-Computer -Force" if reboot else ""
+    return r"""
+$ErrorActionPreference = "Stop"
+$out = @{}
+try {
+    $session = New-Object -ComObject Microsoft.Update.Session
+    $searcher = $session.CreateUpdateSearcher()
+    $r = $searcher.Search("IsInstalled=0 and IsHidden=0")
+    $coll = New-Object -ComObject Microsoft.Update.UpdateColl
+    foreach ($u in $r.Updates) {
+        try { if (-not $u.EulaAccepted) { $u.AcceptEula() } } catch {}
+        [void]$coll.Add($u)
+    }
+    $out.found = $coll.Count
+    if ($coll.Count -gt 0) {
+        $out.download = $null
+        try {
+            $dl = $session.CreateUpdateDownloader()
+            $dl.Updates = $coll
+            $out.download = $dl.Download().ResultCode
+        } catch { $out.download_error = $_.Exception.Message }
+        $inst = $session.CreateUpdateInstaller()
+        $inst.Updates = $coll
+        $res = $inst.Install()
+        $out.install = $res.ResultCode
+        $out.reboot = [bool]$res.RebootRequired
+    } else {
+        $out.install = 2
+        $out.reboot = $false
+    }
+    $out.ok = $true
+} catch {
+    $out.ok = $false
+    $out.error = $_.Exception.Message
+}
+$out | ConvertTo-Json -Compress
+""" + reboot_ps
+
+
+def install_host_updates(hostname, cfg, on_step=None, reboot=False, install_timeout_sec=5400):
+    """Instala updates pendentes no host via Windows Update (COM) por WinRM.
+
+    on_step: callback (message: str) para progresso.
+    Retorna dict {found, download, install, reboot_required, ok, error}.
+    """
+    target = _make_fqdn(hostname, cfg.get("search", ""))
+    session = _connect(target, cfg, operation_timeout_sec=30, read_timeout_sec=60)
+
+    def _notify(msg):
+        if on_step:
+            try:
+                on_step(msg)
+            except Exception:
+                pass
+
+    _notify("Buscando updates pendentes...")
+    raw = _run_ps_with_timeout(session, _ps_install_updates(reboot=reboot), label="install-updates", timeout_sec=install_timeout_sec)
+    parsed = _safe_json(raw, "install-updates") or {}
+
+    result_codes = {2: "Sucesso", 3: "Sucesso com erros", 4: "Falhou", 5: "Abortado", None: "—"}
+    parsed["install_label"] = result_codes.get(parsed.get("install"), str(parsed.get("install")))
+    if not parsed.get("ok"):
+        _notify(f"✗ Update falhou: {str(parsed.get('error'))[:100]}")
+    else:
+        _notify(f"✓ Instalação: {parsed['install_label']} ({parsed.get('found', 0)} update(s))")
+        if parsed.get("reboot"):
+            _notify("⚠ Reboot necessário para concluir")
+    return parsed
+
+
 def scan_host_patches(hostname, cfg, on_step=None):
     """Escaneia patches de um host: KBs instalados + updates pendentes + status do SO.
 
