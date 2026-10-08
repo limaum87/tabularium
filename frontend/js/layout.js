@@ -28,6 +28,7 @@ function loadLayout(activePage) {
         { id: 'legacy', icon: '⊘', label: 'Micros Legados', href: '/legacy.html', badge: true },
         { section: 'Inventário' },
         { id: 'logged-users', icon: '⊙', label: 'Usuários Logados', href: '/logged-users.html' },
+        { id: 'anydesk-lookup', icon: '⌨', label: 'Busca AnyDesk', href: '/anydesk-lookup.html' },
         { id: 'software', icon: '◈', label: 'Softwares', href: '/software.html' },
         { id: 'licenses', icon: '◎', label: 'Licenças', href: '/licenses.html' },
         { id: 'windows-versions', icon: '⊞', label: 'Versões Windows', href: '/windows-versions.html' },

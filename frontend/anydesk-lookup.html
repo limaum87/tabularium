@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tabularium — Busca AnyDesk</title>
+    <link rel="stylesheet" href="/css/theme.css">
+    <style>
+        .lookup-box {
+            max-width: 640px;
+            margin: 40px auto 0;
+        }
+        .lookup-input-row {
+            display: flex;
+            gap: 10px;
+        }
+        .lookup-input {
+            flex: 1;
+            padding: 12px 18px;
+            font-family: var(--font-mono);
+            font-size: 18px;
+            letter-spacing: 0.08em;
+            color: var(--text-primary);
+            background: var(--bg-panel, #161b28);
+            border: 1px solid var(--border-medium);
+            border-radius: 8px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .lookup-input:focus {
+            border-color: var(--accent);
+        }
+        .lookup-btn {
+            padding: 12px 26px;
+            font-size: 13px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            background: var(--accent);
+            color: #14161c;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: filter 0.2s;
+        }
+        .lookup-btn:hover { filter: brightness(1.1); }
+        .lookup-result {
+            margin-top: 28px;
+        }
+        .result-card {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            padding: 22px 26px;
+            background: var(--bg-panel, #161b28);
+            border: 1px solid var(--border-medium);
+            border-radius: 10px;
+        }
+        .result-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 54px;
+            height: 54px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #2a3040, #1e2536);
+            border: 1px solid var(--border-medium);
+            font-size: 26px;
+            flex-shrink: 0;
+        }
+        .result-hostname {
+            font-family: var(--font-mono);
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .result-hostname:hover { text-decoration: underline; }
+        .result-meta {
+            margin-top: 4px;
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .lookup-msg {
+            margin-top: 28px;
+            text-align: center;
+            padding: 34px 20px;
+            border-radius: 10px;
+            border: 1px dashed var(--border-medium);
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+        .lookup-msg.error {
+            color: #e07a7a;
+            border-color: rgba(224, 122, 122, 0.35);
+        }
+        .lookup-hint {
+            margin-top: 14px;
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+        }
+    </style>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+</head>
+<body>
+    <div id="app"></div>
+
+    <script src="/js/auth.js"></script>
+    <script src="/js/layout.js"></script>
+    <script>
+        checkAuth();
+        loadLayout('anydesk-lookup');
+
+        const mainContent = document.querySelector('.main-content');
+
+        mainContent.innerHTML = `
+        <div class="page-header">
+            <div>
+                <h1>Busca AnyDesk</h1>
+                <p class="page-subtitle">Informe um AnyDesk ID para descobrir de qual máquina ele é</p>
+            </div>
+        </div>
+        <div class="page-body">
+            <div class="lookup-box animate-in">
+                <form class="lookup-input-row" id="lookup-form">
+                    <input type="text" class="lookup-input" id="anydesk-id" placeholder="Ex: 1121672852" autocomplete="off" inputmode="numeric">
+                    <button type="submit" class="lookup-btn">Buscar</button>
+                </form>
+                <div class="lookup-hint">dica: cole apenas os números do ID</div>
+                <div class="lookup-result" id="lookup-result"></div>
+            </div>
+        </div>
+        `;
+
+        const form = document.getElementById('lookup-form');
+        const input = document.getElementById('anydesk-id');
+        const resultBox = document.getElementById('lookup-result');
+
+        input.focus();
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = input.value.trim();
+            if (!id) return;
+
+            resultBox.innerHTML = `<div class="lookup-msg">Buscando <span class="mono">${id}</span>...</div>`;
+
+            const res = await apiFetch(`/api/hosts/by-anydesk/${encodeURIComponent(id)}`);
+            if (!res) {
+                resultBox.innerHTML = `<div class="lookup-msg error">Falha na requisição (sessão expirada?). Faça login novamente.</div>`;
+                return;
+            }
+
+            if (res.status === 404) {
+                resultBox.innerHTML = `<div class="lookup-msg error">❌ Nenhum host encontrado com o AnyDesk ID <span class="mono">${id}</span>.<br><span style="font-size:11px;">Execute uma coleta no host para registrar o ID.</span></div>`;
+                return;
+            }
+            if (!res.ok) {
+                resultBox.innerHTML = `<div class="lookup-msg error">Erro ${res.status} ao consultar.</div>`;
+                return;
+            }
+
+            const h = await res.json();
+            const lastSeen = h.last_seen ? new Date(h.last_seen).toLocaleString('pt-BR') : '—';
+            resultBox.innerHTML = `
+            <div class="result-card">
+                <div class="result-icon">🖥️</div>
+                <div>
+                    <a class="result-hostname" href="/host-detail.html?id=${h.host_id}">${h.hostname}</a>
+                    <div class="result-meta">
+                        <span>IP: <span class="mono">${h.ip_address || '—'}</span></span>
+                        <span>AnyDesk: <span class="mono">${h.anydesk_id}</span>${h.anydesk_alias ? ` (${h.anydesk_alias})` : ''}</span>
+                        ${h.anydesk_version ? `<span>v${h.anydesk_version}</span>` : ''}
+                        <span>Visto: ${lastSeen}</span>
+                    </div>
+                </div>
+            </div>`;
+        });
+    </script>
+</body>
+</html>

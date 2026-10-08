@@ -282,6 +282,36 @@ def list_hosts(db: Session = Depends(get_db), _=Depends(get_read_principal)):
     return db.query(Host).filter(Host.is_legacy == False).order_by(Host.hostname).all()
 
 
+@router.get("/by-anydesk/{anydesk_id}")
+def lookup_by_anydesk(anydesk_id: str, db: Session = Depends(get_db), _=Depends(get_read_principal)):
+    """Retorna o host correspondente a um AnyDesk ID."""
+    ra = (
+        db.query(HostRemoteAccess)
+        .filter(HostRemoteAccess.anydesk_id == anydesk_id.strip())
+        .first()
+    )
+    if not ra:
+        raise HTTPException(status_code=404, detail=f"Nenhum host encontrado com AnyDesk ID {anydesk_id}")
+    host = db.query(Host).filter(Host.id == ra.host_id).first()
+    if not host:
+        raise HTTPException(status_code=404, detail="Host associado não encontrado")
+    net = (
+        db.query(HostNetwork)
+        .filter(HostNetwork.host_id == host.id)
+        .order_by(HostNetwork.id.asc())
+        .first()
+    )
+    return {
+        "host_id": host.id,
+        "hostname": host.hostname,
+        "ip_address": net.ip if net else None,
+        "last_seen": host.last_seen,
+        "anydesk_id": ra.anydesk_id,
+        "anydesk_alias": ra.anydesk_alias,
+        "anydesk_version": ra.anydesk_version,
+    }
+
+
 # ---- Legados ----
 
 @router.get("/legacy", response_model=list[HostResponse])
